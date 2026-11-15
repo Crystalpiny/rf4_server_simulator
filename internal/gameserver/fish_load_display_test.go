@@ -158,3 +158,24 @@ func TestFightOfficialStrengthOverridesLegacy(t *testing.T) {
 		t.Fatalf("official strength f5=%v，期望 %v", got, wantStamina)
 	}
 }
+
+// TestFillFightCurveActionsAllSeven 每个池补全后必须含 7 类搏鱼动作，
+// 且不删除原有动作。
+func TestFillFightCurveActionsAllSeven(t *testing.T) {
+	srv, _ := newRigTestServer(t)
+	if len(srv.curves) == 0 {
+		t.Fatal("没有加载动作池")
+	}
+	for name, rows := range srv.curves {
+		out := fillFightCurveActions(rows)
+		ids := map[uint32]bool{}
+		for _, r := range out {
+			ids[uint32(r[0])] = true
+		}
+		for _, id := range []uint32{300, 301, 302, 304, 305, 306, 309} {
+			if !ids[id] {
+				t.Fatalf("%s 缺少动作 %d", name, id)
+			}
+		}
+	}
+}

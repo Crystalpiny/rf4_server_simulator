@@ -138,6 +138,9 @@ func (s *Server) buildFightCurvesWithProfile(species string, pull float64, profi
 	} else {
 		selected = rows
 	}
+	if s.tunableF("fight_fill_actions", 0) != 0 {
+		selected = fillFightCurveActions(selected)
+	}
 	// 官方 14/14 抓包证实：每鱼曲线 = 鱼种池 × 单一 uniform scale（张力列逐行
 	// 精确成立，见 specs/changes/fish-pull-k-table/spec.md），duration 与其余列
 	// 不随体重/阶段缩放。任何逐阶段乘数都是自造层，直接破坏 105 主搏/302 下潜
@@ -183,6 +186,52 @@ func (s *Server) buildFightCurvesWithProfile(species string, pull float64, profi
 			items[i] = proto.U32(uint32(r[i])) // 必须 int（阶段重复次数区间）
 		}
 		out.Items = append(out.Items, wiregen.MustMakeObj("oiikpeaajln", items))
+	}
+	return out
+}
+
+// fillFightCurveActions 补全每个动作池的 7 类搏鱼动作：
+// 300/301/302/304/305/306/309。只补缺失类型，不重排已有动作、
+// 不改已有动作权重；新增条目沿用本池 306 的时长/张力，避免跨池缩放失真。
+func fillFightCurveActions(rows [][19]float64) [][19]float64 {
+	if len(rows) == 0 {
+		return rows
+	}
+	want := map[uint32]float64{
+		300: 0.08, 301: 0.10, 302: 0.10, 304: 0.10,
+		305: 0.10, 306: 0.10, 309: 0.08,
+	}
+	present := map[uint32]bool{}
+	var template [19]float64
+	for _, r := range rows {
+		id := uint32(r[0])
+		if id >= 300 && id <= 309 {
+			present[id] = true
+		}
+		if id == 306 {
+			template = r
+		}
+	}
+	if !present[306] {
+		for _, r := range rows {
+			if r[0] >= 300 && r[0] <= 309 {
+				template = r
+				break
+			}
+		}
+	}
+	if template[0] == 0 {
+		return rows
+	}
+	out := append([][19]float64(nil), rows...)
+	for _, id := range []uint32{300, 301, 302, 304, 305, 306, 309} {
+		if present[id] {
+			continue
+		}
+		r := template
+		r[0] = float64(id)
+		r[1] = want[id]
+		out = append(out, r)
 	}
 	return out
 }
