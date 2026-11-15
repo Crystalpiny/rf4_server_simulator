@@ -152,6 +152,10 @@ func (s *Server) buildFightCurvesWithProfile(species string, pull float64, profi
 	}
 	legacy := s.fightLegacyModel()
 	phaseScales := legacy || s.tunableF("fight_phase_scales", 0) != 0
+	curveTensionScale := s.tunableF("fight_curve_tension_scale", 1)
+	if curveTensionScale <= 0 {
+		curveTensionScale = 1
+	}
 	for _, r := range selected {
 		items := map[int]*proto.Value{0: proto.U32(uint32(r[0]))}
 		stage := uint32(r[0])
@@ -170,7 +174,7 @@ func (s *Server) buildFightCurvesWithProfile(species string, pull float64, profi
 		for i := 1; i <= 14; i++ {
 			v := r[i]
 			if i == 8 || i == 9 {
-				v *= scale * phaseTension
+				v *= scale * phaseTension * curveTensionScale
 			}
 			if (i == 2 || i == 3) && v > 0 {
 				if phaseScales {
