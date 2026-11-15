@@ -133,3 +133,28 @@ func TestFightLegacyModelRestoresOldScales(t *testing.T) {
 		t.Fatalf("legacy f6=%v，期望旧常数 %v", got, srv.fishInitialStaminaRatio())
 	}
 }
+
+// TestFightOfficialStrengthOverridesLegacy 混合模式：保留 legacy 曲线，
+// 但 f8/f5/f6 强制回官方口径。
+func TestFightOfficialStrengthOverridesLegacy(t *testing.T) {
+	srv, _ := newRigTestServer(t)
+	srv.tunMu.Lock()
+	srv.tunCache = map[string]float64{"fight_legacy_model": 1, "fight_official_strength": 1}
+	srv.tunText = map[string]string{"fight_legacy_model": "1", "fight_official_strength": "1"}
+	srv.tunAt = time.Now()
+	srv.tunMu.Unlock()
+
+	f := &RolledFish{Species: "b_carp", WeightG: 1000, Grade: 2}
+	profile := srv.fishFightProfileFor(f)
+	wantPull := 1.0 * (srv.fishPullK0For("b_carp") + fishPullLnSlope*math.Log(1))
+	if got := srv.fishFightPullFor(f); math.Abs(got-wantPull) > 1e-3 {
+		t.Fatalf("official strength f8=%v，期望官方公式 %v", got, wantPull)
+	}
+	if got := srv.fishF6For(f); got != fishF6Table["b_carp"] {
+		t.Fatalf("official strength f6=%v，期望 %v", got, fishF6Table["b_carp"])
+	}
+	wantStamina := fishStaminaRatePerGram["b_carp"] * 1000
+	if got := srv.fishStaminaForProfile(f, profile); math.Abs(got-wantStamina) > 1e-6 {
+		t.Fatalf("official strength f5=%v，期望 %v", got, wantStamina)
+	}
+}

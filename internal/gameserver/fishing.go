@@ -796,12 +796,16 @@ func (s *Server) fightLegacyModel() bool {
 	return s.tunableF("fight_legacy_model", 0) != 0
 }
 
+func (s *Server) fightOfficialStrength() bool {
+	return s.tunableF("fight_official_strength", 0) != 0
+}
+
 func (s *Server) fishFightPullFor(f *RolledFish) float64 {
 	if f == nil {
 		return 0
 	}
 	pull := f.Force
-	if s.fightLegacyModel() {
+	if s.fightLegacyModel() && !s.fightOfficialStrength() {
 		if pull <= 0 {
 			pull = verifiedForcePerGram * float64(f.WeightG)
 		}
@@ -2061,7 +2065,7 @@ func (s *Server) fishStaminaForProfile(f *RolledFish, profile fishFightProfile) 
 	if f == nil {
 		return 0
 	}
-	if s.fightLegacyModel() {
+	if s.fightLegacyModel() && !s.fightOfficialStrength() {
 		stamina := f.Stamina
 		if stamina <= 0 {
 			stamina = verifiedStaminaPerGram * float64(f.WeightG)
@@ -2187,7 +2191,7 @@ func (s *Server) fishF6For(f *RolledFish) float64 {
 	if f == nil {
 		return s.fishInitialStaminaRatio()
 	}
-	if s.fightLegacyModel() {
+	if s.fightLegacyModel() && !s.fightOfficialStrength() {
 		return s.fishInitialStaminaRatio()
 	}
 	if v, ok := fishF6Table[f.Species]; ok {
