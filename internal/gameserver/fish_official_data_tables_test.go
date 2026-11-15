@@ -61,7 +61,7 @@ func TestFishF6MatchesOfficialTable(t *testing.T) {
 		{"s.bream", 359, 0.30},
 		{"n.pike", 4305, 0.80},
 		{"g_carp", 21742, 0.70},
-		{"not_in_calib", 500, defaultFishInitialStaminaRatio},
+		{"not_in_calib", 500, 0.55},
 	}
 	for _, c := range cases {
 		f := &RolledFish{Species: c.species, WeightG: c.weightG}
