@@ -106,29 +106,3 @@ func protoF32Field(row *proto.Value, idx int) float64 {
 	}
 	return float64(proto.F32FromBits(uint32(u64Of(row.Fields[idx].Num))))
 }
-
-// TestDiversifyFightCurveRows 验证多样性开关：302 不再独占权重，
-// 缺失的 304/305/309 会从 306 克隆补入。
-func TestDiversifyFightCurveRows(t *testing.T) {
-	rows := [][19]float64{
-		{100, 1, 30, 60},
-		{302, 0.9, 0.5, 2},
-		{306, 0.1, 3, 7},
-	}
-	out := diversifyFightCurveRows(rows)
-	weights := map[uint32]float64{}
-	for _, r := range out {
-		weights[uint32(r[0])] += r[1]
-	}
-	if math.Abs(weights[302]-0.30) > 1e-9 || math.Abs(weights[306]-0.30) > 1e-9 {
-		t.Fatalf("302/306 权重未归一：%v", weights)
-	}
-	for _, id := range []uint32{304, 305, 309} {
-		if weights[id] <= 0 {
-			t.Fatalf("缺少动作 %d：%v", id, weights)
-		}
-	}
-	if out[0][0] != 100 {
-		t.Fatalf("基准行必须保持在首位，实得 %v", out[0][0])
-	}
-}

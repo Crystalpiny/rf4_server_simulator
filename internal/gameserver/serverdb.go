@@ -124,9 +124,6 @@ func (s *Server) buildFightCurves(species string, pull float64) *proto.Value {
 	} else {
 		selected = rows
 	}
-	if s.tunableF("fight_curve_variety", 0) != 0 {
-		selected = diversifyFightCurveRows(selected)
-	}
 	// 官方 14/14 抓包证实：每鱼曲线 = 鱼种池 × 单一 uniform scale（张力列逐行
 	// 精确成立，见 specs/changes/fish-pull-k-table/spec.md），duration 与其余列
 	// 不随体重/阶段缩放。任何逐阶段乘数都是自造层，直接破坏 105 主搏/302 下潜
@@ -149,62 +146,6 @@ func (s *Server) buildFightCurves(species string, pull float64) *proto.Value {
 			items[i] = proto.U32(uint32(r[i])) // 必须 int（阶段重复次数区间）
 		}
 		out.Items = append(out.Items, wiregen.MustMakeObj("oiikpeaajln", items))
-	}
-	return out
-}
-
-// diversifyFightCurveRows 给 f21 动作池补多样性：官方池里 302（横向/下潜）
-// 往往占绝对权重，301（窜逃）、304/305（甩头/翻滚）、306（持续拉扯）、
-// 309（节奏变化）权重很低或缺失，客户端会长期只抽到同一种动作。
-// 这里只调整搏鱼动作（300..309）的权重，并在缺 304/305/309 时用 306
-// 克隆一条同形状动作；等待期 100..105 和基准行不动。
-func diversifyFightCurveRows(rows [][19]float64) [][19]float64 {
-	if len(rows) == 0 {
-		return rows
-	}
-	out := append([][19]float64(nil), rows...)
-	weights := map[uint32]float64{
-		300: 0.08, 301: 0.30, 302: 0.30, 304: 0.15,
-		305: 0.20, 306: 0.30, 309: 0.08,
-	}
-	sum := map[uint32]float64{}
-	present := map[uint32]bool{}
-	var template [19]float64
-	for _, r := range out {
-		if r[0] >= 300 && r[0] <= 309 {
-			present[uint32(r[0])] = true
-			sum[uint32(r[0])] += r[1]
-			if r[0] == 306 {
-				template = r
-			}
-		}
-	}
-	if template[0] == 0 {
-		for _, r := range out {
-			if r[0] >= 300 && r[0] <= 309 {
-				template = r
-				break
-			}
-		}
-	}
-	// 先按 ID 归一化已有动作的权重。
-	for i := range out {
-		id := uint32(out[i][0])
-		want, ok := weights[id]
-		if !ok || !present[id] || sum[id] <= 0 {
-			continue
-		}
-		out[i][1] *= want / sum[id]
-	}
-	// 缺的动作补一条同形状行；客户端对 304/305/309 都有一等实现。
-	for _, id := range []uint32{304, 305, 309} {
-		if present[id] || template[0] == 0 {
-			continue
-		}
-		r := template
-		r[0] = float64(id)
-		r[1] = weights[id]
-		out = append(out, r)
 	}
 	return out
 }
