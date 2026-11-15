@@ -79,53 +79,6 @@ func fishFightArchetypeFor(species string) fishFightArchetype {
 	}
 }
 
-// fightPhaseTensionScale / fightPhaseDurationScale 是 3166958 之前的分阶段
-// 节奏表。它并非官方逐帧真值，但能恢复“冲刺—拉扯—休息”的阶段差异；
-// 由 fight_phase_scales 开关控制，默认关闭以保持官方 uniform 口径。
-func fightPhaseTensionScale(stage uint32) float64 {
-	switch stage {
-	case 300:
-		return 1.36
-	case 301:
-		return 1.20
-	case 302:
-		return 1.78
-	case 306:
-		return 0.42
-	case 101:
-		return 1.66
-	case 102:
-		return 1.42
-	case 103:
-		return 1.16
-	case 104:
-		return 0.62
-	case 105:
-		return 0.30
-	default:
-		return 0.92
-	}
-}
-
-func fightPhaseDurationScale(stage uint32) float64 {
-	switch stage {
-	case 302:
-		return 0.82
-	case 101:
-		return 0.72
-	case 102:
-		return 0.78
-	case 103:
-		return 1.18
-	case 104:
-		return 1.35
-	case 105, 306:
-		return 1.55
-	default:
-		return 1.0
-	}
-}
-
 func (s *Server) fishFightProfileFor(f *RolledFish) fishFightProfile {
 	arch := fishFightArchetypeFor("")
 	if f != nil {
