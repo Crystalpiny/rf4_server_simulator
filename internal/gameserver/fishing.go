@@ -792,11 +792,25 @@ func (s *Server) fishPullK0For(species string) float64 {
 // （specs/changes/fish-pull-k-table/spec.md）。官方 k 无 archetype 形状，
 // 因此 profile 不再参与力的缩放；RolledFish.Force 手动覆盖与
 // fight_power_scale 应急缩放保留。
+func (s *Server) fightLegacyModel() bool {
+	return s.tunableF("fight_legacy_model", 0) != 0
+}
+
 func (s *Server) fishFightPullFor(f *RolledFish) float64 {
 	if f == nil {
 		return 0
 	}
 	pull := f.Force
+	if s.fightLegacyModel() {
+		if pull <= 0 {
+			pull = verifiedForcePerGram * float64(f.WeightG)
+		}
+		if k := s.tunableF("fight_power_scale", 1.0); k > 0 && k != 1.0 {
+			pull = math.Max(0.5, math.Round(pull*k*10000)/10000)
+		}
+		profile := s.fishFightProfileFor(f)
+		return math.Max(0.5, math.Round(pull*profile.ForceScale*10000)/10000)
+	}
 	if pull <= 0 {
 		wKg := math.Max(0.01, float64(f.WeightG)/1000)
 		slope := s.tunableF("fish_pull_ln_slope", fishPullLnSlope)
@@ -2047,6 +2061,16 @@ func (s *Server) fishStaminaForProfile(f *RolledFish, profile fishFightProfile) 
 	if f == nil {
 		return 0
 	}
+	if s.fightLegacyModel() {
+		stamina := f.Stamina
+		if stamina <= 0 {
+			stamina = verifiedStaminaPerGram * float64(f.WeightG)
+		}
+		if scale := s.tunableF("fish_stamina_scale", defaultFishStaminaScale); scale > 0 {
+			stamina *= scale
+		}
+		return stamina * profile.StaminaScale
+	}
 	stamina := f.Stamina
 	if stamina <= 0 {
 		// 实测种走官方每克均值（A 级样本，specs/changes/fish-official-data-tables/spec.md），
@@ -2161,6 +2185,9 @@ var fishF6Group = map[string]float64{
 // fishF6For 返回本鱼 f6：实测种量化表（含体重台阶）→ 习性组兜底。
 func (s *Server) fishF6For(f *RolledFish) float64 {
 	if f == nil {
+		return s.fishInitialStaminaRatio()
+	}
+	if s.fightLegacyModel() {
 		return s.fishInitialStaminaRatio()
 	}
 	if v, ok := fishF6Table[f.Species]; ok {
@@ -2303,7 +2330,7 @@ func (s *Server) buildFish27(f *RolledFish, hookGUID, gearGuid string, rigType i
 		18: proto.F32(float32(f18v)),
 		19: proto.F32(float32(f19v)),
 		20: proto.F32(float32(f20v)),
-		21: s.buildFightCurves(f.Species, pull),
+		21: s.buildFightCurvesForFish(f, pull),
 		22: proto.Str(f22),
 		23: proto.Guid(hook),
 		24: proto.Null(),

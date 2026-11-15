@@ -3,6 +3,7 @@ package gameserver
 import (
 	"math"
 	"testing"
+	"time"
 
 	"rf4server/internal/proto"
 )
@@ -105,4 +106,30 @@ func protoF32Field(row *proto.Value, idx int) float64 {
 		return 0
 	}
 	return float64(proto.F32FromBits(uint32(u64Of(row.Fields[idx].Num))))
+}
+
+// TestFightLegacyModelRestoresOldScales 旧版完整模型：f8 回到
+// verifiedForcePerGram × ForceScale，f5 回到 2.388/g × StaminaScale，
+// f6 回到旧常数。
+func TestFightLegacyModelRestoresOldScales(t *testing.T) {
+	srv, _ := newRigTestServer(t)
+	srv.tunMu.Lock()
+	srv.tunCache = map[string]float64{"fight_legacy_model": 1}
+	srv.tunText = map[string]string{"fight_legacy_model": "1"}
+	srv.tunAt = time.Now()
+	srv.tunMu.Unlock()
+
+	f := &RolledFish{Species: "keta", WeightG: 1000, Grade: 2}
+	profile := srv.fishFightProfileFor(f)
+	wantPull := verifiedForcePerGram * 1000 * profile.ForceScale
+	if got := srv.fishFightPullFor(f); math.Abs(got-wantPull) > 1e-3 {
+		t.Fatalf("legacy f8=%v，期望旧公式 %v", got, wantPull)
+	}
+	wantStamina := verifiedStaminaPerGram * 1000 * profile.StaminaScale
+	if got := srv.fishStaminaForProfile(f, profile); math.Abs(got-wantStamina) > 1e-6 {
+		t.Fatalf("legacy f5=%v，期望旧公式 %v", got, wantStamina)
+	}
+	if got := srv.fishF6For(f); got != srv.fishInitialStaminaRatio() {
+		t.Fatalf("legacy f6=%v，期望旧常数 %v", got, srv.fishInitialStaminaRatio())
+	}
 }
