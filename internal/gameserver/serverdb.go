@@ -133,12 +133,22 @@ func (s *Server) buildFightCurves(species string, pull float64) *proto.Value {
 	if baseTension > 0 {
 		scale = pull / baseTension
 	}
+	phaseScales := s.tunableF("fight_phase_scales", 0) != 0
 	for _, r := range selected {
 		items := map[int]*proto.Value{0: proto.U32(uint32(r[0]))}
+		stage := uint32(r[0])
+		phaseTension, phaseDuration := 1.0, 1.0
+		if phaseScales {
+			phaseTension = fightPhaseTensionScale(stage)
+			phaseDuration = fightPhaseDurationScale(stage)
+		}
 		for i := 1; i <= 14; i++ {
 			v := r[i]
 			if i == 8 || i == 9 {
-				v *= scale
+				v *= scale * phaseTension
+			}
+			if phaseScales && (i == 2 || i == 3) && v > 0 {
+				v = math.Max(0.1, v*phaseDuration)
 			}
 			items[i] = proto.F32(float32(v))
 		}

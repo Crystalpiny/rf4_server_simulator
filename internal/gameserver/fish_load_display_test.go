@@ -106,3 +106,23 @@ func protoF32Field(row *proto.Value, idx int) float64 {
 	}
 	return float64(proto.F32FromBits(uint32(u64Of(row.Fields[idx].Num))))
 }
+
+// TestFightPhaseScalesAB 旧版阶段节奏表：302 加强冲刺、306/104/105 拉长休息，
+// 用于 fight_phase_scales A/B。
+func TestFightPhaseScalesAB(t *testing.T) {
+	if got := fightPhaseTensionScale(302); got != 1.78 {
+		t.Fatalf("302 阶段张力=%v，期望 1.78", got)
+	}
+	if got := fightPhaseTensionScale(306); got != 0.42 {
+		t.Fatalf("306 阶段张力=%v，期望 0.42", got)
+	}
+	if got := fightPhaseDurationScale(306); got != 1.55 {
+		t.Fatalf("306 阶段时长=%v，期望 1.55", got)
+	}
+	if got := fightPhaseDurationScale(104); got != 1.35 {
+		t.Fatalf("104 休息时长=%v，期望 1.35", got)
+	}
+	if got := fightPhaseTensionScale(999); got != 0.92 {
+		t.Fatalf("未知阶段张力=%v，期望 0.92", got)
+	}
+}
