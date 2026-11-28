@@ -92,6 +92,14 @@ const tokenSlotCount = 64
 // NewRealtimeServer 构建 realtime 服务。
 func NewRealtimeServer(cfg config.Gateway, store Store, log *slog.Logger, tm *TunnelManager, obs *metrics.Server) *RealtimeServer {
 	initRealtimeMetrics(obsRegistry(obs))
+	// cfg 是值拷贝，这里改写只影响本实例。启动路径上的 config.Load 已经做过同样的
+	// 校验，兜底是为了不依赖调用方一定走过配置加载；非法值必然导致接入面卡死或
+	// 直接 panic，因此必须落到正容量上，并且留下可见告警。
+	if err := config.CheckMaxConns(cfg.MaxConns); err != nil {
+		log.Warn("gateway.max_conns 非法，使用默认值",
+			"value", cfg.MaxConns, "default", config.DefaultMaxConns, "err", err)
+		cfg.MaxConns = config.DefaultMaxConns
+	}
 	return &RealtimeServer{
 		cfg:    cfg,
 		store:  store,
