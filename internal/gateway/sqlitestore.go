@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"rf4server/internal/store"
@@ -54,19 +55,35 @@ func (s *SQLiteStore) LookupToken(ctx context.Context, token string) (TokenInfo,
 }
 
 // lookupByPrefix 前缀匹配（token 以 logintoken 开头）。
+//
+// 用 substr 做字面前缀比较，不用 LIKE：这里的 prefix 是客户端输入，LIKE 会把其中的
+// % 和 _ 当成通配符，于是 %|%|1000001|% 这类伪造串能命中任意已签发记录、冒用他人 uid。
+// substr 只做字面量比较，通配符在查询里彻底失去特殊含义。
 func (s *SQLiteStore) lookupByPrefix(ctx context.Context, prefix string) (TokenInfo, bool, error) {
-	if len(prefix) < 8 {
+	if len(prefix) < 8 || hasTokenWildcard(prefix) {
 		return TokenInfo{}, false, nil
 	}
 	var infoJSON string
 	var expiresF float64
 	err := s.DB.SQL.QueryRowContext(ctx,
-		`SELECT info_json, expires FROM gw_token WHERE token LIKE ?||'%' AND length(token)>? ORDER BY expires DESC LIMIT 1`,
-		prefix, len(prefix)).Scan(&infoJSON, &expiresF)
+		`SELECT info_json, expires FROM gw_token WHERE substr(token,1,?)=? AND length(token)>? ORDER BY expires DESC LIMIT 1`,
+		len(prefix), prefix, len(prefix)).Scan(&infoJSON, &expiresF)
 	if err != nil {
-		return TokenInfo{}, false, nil // 无前缀命中
+		if errors.Is(err, sql.ErrNoRows) {
+			return TokenInfo{}, false, nil // 无前缀命中
+		}
+		// 读库真出错必须报出去：realtime 靠 err 区分「查询异常」与「未登记」。
+		return TokenInfo{}, false, err
 	}
 	return decodeTokenInfo(infoJSON, expiresF)
+}
+
+// hasTokenWildcard 报告凭据里是否含 LIKE 通配符 % _ 或转义符 \。
+//
+// 真实凭据的字符集只有 hex 的 0-9a-f、base64 的 A-Za-z0-9+/ 与分隔符 '|'，
+// 不含这三个字符，因此拒绝它们不会挡住任何合法客户端。
+func hasTokenWildcard(token string) bool {
+	return strings.ContainsAny(token, "%_\\")
 }
 
 func decodeTokenInfo(infoJSON string, expires float64) (TokenInfo, bool, error) {

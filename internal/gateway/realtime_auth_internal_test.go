@@ -140,7 +140,89 @@ func TestSQLiteStoreLookupByLogintokenAndPrefix(t *testing.T) {
 		}
 	}
 
-	if _, found, err := s.LookupToken(ctx, "a|b|1000001|c"); err != nil || found {
-		t.Fatalf("未签发的 token 查到了记录（found=%v err=%v）：realtime 会放行伪造凭据", found, err)
+	// 伪造凭据：既有四段形态，也有 LIKE 通配符形态（%、_、\）。
+	// %|%|1000001|% 是真正可利用的那一个——以 % 开头的通配前缀能命中任意记录。
+	forgedTokens := []struct{ name, token string }{
+		{"四段伪造", "a|b|1000001|c"},
+		{"通配四段", "%|%|1000001|%"},
+		{"通配双段", "%|%"},
+		{"全通配", "%|%|%"},
+		{"纯通配", "%%"},
+		{"下划线通配", "_|_|1000001|_"},
+		{"通配加转义符", `%_\`},
+		{"local 前导通配", "local|%|1000001|%"},
+		{"通配后缀", "aaaaaaaa|%"},
+		{"前导空段通配", "|%|%|1000001|%"},
+		{"长通配前缀", "%%%%%%%|%|1000001|%"},
+		{"兼容区全角通配", "％|％|1000001|％"},
+		{"兼容区下划线", "＿|＿|1000001|＿"},
+	}
+	for _, forged := range forgedTokens {
+		got, found, err := s.LookupToken(ctx, forged.token)
+		if err != nil {
+			t.Fatalf("伪造 token %q 查询报错 %v：查询异常与未登记必须区分", forged.name, err)
+		}
+		if found {
+			t.Fatalf("伪造 token %q 命中了 uid=%d 的签发记录：通配符生效，realtime 会放行冒名连接", forged.name, got.Userid)
+		}
+	}
+
+	// 前缀长度门槛是防枚举的，短前缀必须继续拒绝。
+	if _, found, err := s.LookupToken(ctx, token[:7]); err != nil || found {
+		t.Fatalf("7 字符前缀查到了记录（found=%v err=%v）：长度门槛失效，可被枚举", found, err)
+	}
+}
+
+// TestSQLiteStoreLookupErrorNotReportedAsNotFound 锁住两条查询路径的 err 语义：
+// realtime.go 靠 err 区分「查询异常」与「未登记」。前缀查询若把读库错误当成未命中
+// 静默吞掉，线上库损坏时只会表现为「所有玩家突然未登记」，日志里看不到真实原因。
+func TestSQLiteStoreLookupErrorNotReportedAsNotFound(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "gw-token.db"))
+	if err != nil {
+		t.Fatalf("打开测试库失败: %v", err)
+	}
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("迁移测试库失败: %v", err)
+	}
+	s := NewSQLiteStore(db, slog.New(slog.DiscardHandler))
+	if err := db.Close(); err != nil {
+		t.Fatalf("关闭测试库失败: %v", err)
+	}
+	ctx := context.Background()
+
+	// 外层：精确查询失败必须报出去。
+	if _, found, err := s.LookupToken(ctx, NewToken(1000001)); err == nil {
+		t.Fatal("精确查询：库已关闭却返回 nil 错误，realtime 无法区分故障与未签发")
+	} else if found {
+		t.Fatal("精确查询：库已关闭却报告命中签发记录")
+	}
+
+	// 内层：精确查询未命中后走的前缀查询，读库失败同样必须报出去，
+	// 不能退化成「未命中」——那正是伪造前缀和库故障被混为一谈的地方。
+	if _, found, err := s.lookupByPrefix(ctx, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"); err == nil {
+		t.Fatal("前缀查询：库已关闭却返回 nil 错误，读库异常被当成未命中")
+	} else if found {
+		t.Fatal("前缀查询：库已关闭却报告命中签发记录")
+	}
+}
+
+// TestMemStoreLookupPrefixRules 保证 MemStore 与 SQLiteStore 的前缀规则一致：
+// 测试用的 MemStore 若比生产存储宽松，鉴权用例会掩盖真实行为。
+func TestMemStoreLookupPrefixRules(t *testing.T) {
+	m := NewMemStore(1000001)
+	ctx := context.Background()
+	const uid = int64(1000001)
+	token := NewToken(uid)
+	if err := m.SaveToken(ctx, token, TokenInfo{Userid: uid}, time.Hour); err != nil {
+		t.Fatalf("登记 token 失败: %v", err)
+	}
+	if _, found, _ := m.LookupToken(ctx, token[:12]); !found {
+		t.Fatal("合法前缀在 MemStore 查不到：前缀兜底被挡死")
+	}
+	if _, found, _ := m.LookupToken(ctx, token[:7]); found {
+		t.Fatal("7 字符前缀在 MemStore 命中：长度门槛失效")
+	}
+	if _, found, _ := m.LookupToken(ctx, "%|%|1000001|%"); found {
+		t.Fatal("通配前缀在 MemStore 命中：两套存储对伪造前缀判定不一致")
 	}
 }
