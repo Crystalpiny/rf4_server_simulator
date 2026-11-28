@@ -237,6 +237,7 @@ func (s *Server) handleStoreItemUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("shop_override", req.StoreID+"/"+req.ItemID,
 		fmt.Sprintf("silver=%d gold=%d stock=%d", req.Silver, req.Gold, req.Stock))
 	if !s.commitAdmin(r.Context(), w, aw) {
@@ -259,6 +260,7 @@ func (s *Server) handleStoreItemReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("shop_override_reset", req.StoreID+"/"+req.ItemID, "")
 	if !s.commitAdmin(r.Context(), w, aw) {
 		return
@@ -442,6 +444,7 @@ func (s *Server) handleFishConfigSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("fish_config", req.Area,
 		fmt.Sprintf("probability=%.3f fixed=%.2f scale=%.2f fish=%d",
 			req.Setting.BiteProbability, req.Setting.BiteDelayFixed,
@@ -466,6 +469,7 @@ func (s *Server) handleFishConfigReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("fish_config_reset", req.Area, "")
 	aw.push(mustJSON(map[string]any{"op": "reload_tunables"}))
 	if !s.commitAdmin(r.Context(), w, aw) {
@@ -520,6 +524,7 @@ func (s *Server) handlePlayerSkillUpdate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.push(mustJSON(map[string]any{
 		"op": "refresh_skills", "uid": req.UID,
 	}))
@@ -553,6 +558,7 @@ func (s *Server) handlePlayerSkillPoints(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.push(mustJSON(map[string]any{
 		"op": "refresh_skills", "uid": req.UID,
 	}))

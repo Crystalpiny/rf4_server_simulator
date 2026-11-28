@@ -24,6 +24,14 @@ type adminWrite struct {
 	admin  string
 	audits []adminAudit
 	queue  []string
+	// businessApplied 表示业务写入已在本事务之外提交成功。此时审计/队列失败
+	// 只能说明"副作用没记上或没投递"，不能让管理员重复提交业务本身。
+	businessApplied bool
+}
+
+// markBusinessApplied 标记业务写入已落库，供失败响应选择正确语义。
+func (w *adminWrite) markBusinessApplied() {
+	w.businessApplied = true
 }
 
 // audit 追加一条审计行。
@@ -68,8 +76,13 @@ func (s *Server) commitAdmin(ctx context.Context, w http.ResponseWriter, aw admi
 		if len(aw.queue) > 0 {
 			attrs = append(attrs, "payload", trimLog(aw.queue[0], 160))
 		}
-		s.log.l.Error("管理操作未生效：审计或指令写入失败", attrs...)
-		httpError(w, 500, "操作未生效：审计或指令写入失败")
+		if aw.businessApplied {
+			s.log.l.Error("业务写入已生效，审计或指令写入失败", attrs...)
+			httpError(w, 500, "业务已生效，但审计或指令写入失败；请勿重复提交，先核对结果")
+		} else {
+			s.log.l.Error("管理操作未生效：审计或指令写入失败", attrs...)
+			httpError(w, 500, "操作未生效：审计或指令写入失败，可重试")
+		}
 		return false
 	}
 	return true

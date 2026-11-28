@@ -80,6 +80,7 @@ func (s *Server) handleFishZoneSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("fish_zone_save", z.Loc,
 		"zone="+strconv.FormatInt(z.ID, 10)+" kind="+z.Kind+" mode="+z.Mode+
 			" fish="+strconv.Itoa(len(z.Fish))+" enabled="+strconv.FormatBool(z.Enabled))
@@ -110,6 +111,7 @@ func (s *Server) handleFishZoneDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("fish_zone_delete", strconv.FormatInt(req.ID, 10), "")
 	aw.push(mustJSON(map[string]any{"op": "reload_fish_zones"}))
 	if !s.commitAdmin(ctx, w, aw) {

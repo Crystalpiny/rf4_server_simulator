@@ -94,6 +94,7 @@ func (s *Server) handleBaitRuleSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("bait_rule_save", fishZh,
 		"allow="+strconv.Itoa(len(ov.Allow))+" deny="+strconv.Itoa(len(ov.Deny))+
 			" groups="+strconv.Itoa(len(groups))+" interval="+strconv.FormatInt(ov.RotateSec, 10)+
@@ -137,6 +138,7 @@ func (s *Server) handleBaitRuleReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("bait_rule_reset", target,
 		"rows="+strconv.FormatInt(n, 10))
 	aw.push(mustJSON(map[string]any{"op": "reload_bait_rules"}))

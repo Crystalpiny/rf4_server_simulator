@@ -73,8 +73,8 @@ func NewServer(cfg config.Admin, db *store.DB, log logger, webFS fs.FS) *Server 
 		return s.withAuth(h)
 	}
 	mux.HandleFunc("GET /api/me", auth(s.handleMe))
-	mux.HandleFunc("GET /api/dashboard", s.handleDashboard)  // 匿名只读：不登录也能看
-	mux.HandleFunc("GET /api/tunables", s.handleTunableList) // 匿名只读：不登录也能看
+	mux.HandleFunc("GET /api/dashboard", s.withOptionalAuth(s.handleDashboard)) // 匿名只给健康状态，登录后才给运行态统计
+	mux.HandleFunc("GET /api/tunables", s.handleTunableList)                    // 匿名只读：不登录也能看
 	mux.HandleFunc("POST /api/tunables", auth(s.handleTunableSet))
 	mux.HandleFunc("POST /api/skill_gain_mode", auth(s.handleSkillGainModeSet))
 	mux.HandleFunc("POST /api/fish_tv_test", auth(s.handleFishTVTest))
@@ -122,7 +122,7 @@ func NewServer(cfg config.Admin, db *store.DB, log logger, webFS fs.FS) *Server 
 	mux.HandleFunc("POST /api/fish/zones", auth(s.handleFishZoneSave))
 	mux.HandleFunc("POST /api/fish/zones/delete", auth(s.handleFishZoneDelete))
 	mux.HandleFunc("POST /api/mail/send", auth(s.handleMailSend))
-	mux.HandleFunc("GET /api/audit", s.handleAudit)                // 匿名只读：不登录也能看
+	mux.HandleFunc("GET /api/audit", auth(s.handleAudit))          // 含管理员账号与操作明细，必须登录
 	mux.HandleFunc("GET /api/about", s.handleAbout)                // 匿名只读：不登录也能看
 	mux.HandleFunc("GET /api/release-notes", s.handleReleaseNotes) // 匿名只读：不登录也能看
 
@@ -236,21 +236,45 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) withAuth(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		authz := r.Header.Get("Authorization")
-		if !strings.HasPrefix(authz, "Bearer ") {
+		if !strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
 			httpError(w, 401, "未认证")
 			return
 		}
-		tok, err := jwt.ParseWithClaims(strings.TrimPrefix(authz, "Bearer "), &claims{},
-			func(t *jwt.Token) (any, error) { return s.jwtKey, nil })
-		if err != nil || !tok.Valid {
+		username := s.parseAdmin(r.Header.Get("Authorization"))
+		if username == "" {
 			httpError(w, 401, "会话过期")
 			return
 		}
-		cl := tok.Claims.(*claims)
-		r = r.WithContext(context.WithValue(r.Context(), ctxAdmin{}, cl.Username))
+		h(w, r.WithContext(context.WithValue(r.Context(), ctxAdmin{}, username)))
+	}
+}
+
+// withOptionalAuth 只解析可选令牌：有效时按管理员处理，缺失或失效时按匿名继续。
+// 用于既对匿名开放、又要按登录态裁剪响应字段的只读接口。
+func (s *Server) withOptionalAuth(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if username := s.parseAdmin(r.Header.Get("Authorization")); username != "" {
+			r = r.WithContext(context.WithValue(r.Context(), ctxAdmin{}, username))
+		}
 		h(w, r)
 	}
+}
+
+// parseAdmin 校验 Authorization 头里的 JWT 并返回管理员名；缺失或无效返回空串。
+func (s *Server) parseAdmin(authz string) string {
+	if !strings.HasPrefix(authz, "Bearer ") {
+		return ""
+	}
+	tok, err := jwt.ParseWithClaims(strings.TrimPrefix(authz, "Bearer "), &claims{},
+		func(t *jwt.Token) (any, error) { return s.jwtKey, nil })
+	if err != nil || !tok.Valid {
+		return ""
+	}
+	cl, ok := tok.Claims.(*claims)
+	if !ok || cl == nil {
+		return ""
+	}
+	return cl.Username
 }
 
 type ctxAdmin struct{}
@@ -271,6 +295,16 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 // ---- 仪表盘 ----
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
+	payload := map[string]any{"pg": "up"}
+	if u := s.updatePayload(); u != nil {
+		payload["update"] = u
+	}
+	// 匿名只报告数据库可用；角色数、物品数、邮件数与审计条数属于运行态数据，
+	// 只随已登录的会话下发。
+	if adminOf(r) == "" {
+		writeJSON(w, payload)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 	var players, items, mails, audits int64
@@ -279,18 +313,12 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	_ = s.db.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM mail`).Scan(&mails)
 	_ = s.db.SQL.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&audits)
 	tunables, _ := s.db.TunableList(ctx)
-	payload := map[string]any{
-		"sessions": s.sessionCount.Load(),
-		"players":  players,
-		"items":    items,
-		"mails":    mails,
-		"audits":   audits,
-		"tunables": len(tunables),
-		"pg":       "up",
-	}
-	if u := s.updatePayload(); u != nil {
-		payload["update"] = u
-	}
+	payload["sessions"] = s.sessionCount.Load()
+	payload["players"] = players
+	payload["items"] = items
+	payload["mails"] = mails
+	payload["audits"] = audits
+	payload["tunables"] = len(tunables)
 	writeJSON(w, payload)
 }
 
@@ -550,6 +578,7 @@ func (s *Server) handleTunableSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("tunable", req.Key, req.Value)
 	// 两个限时活动互斥：开启任一个自动关闭另一个。5012 同时出现阶段 5/6 时
 	// 客户端只显示新年入口，周年面板会变成不可达。
@@ -615,6 +644,7 @@ func (s *Server) handleBiteModeSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("bite_mode", "mode", req.Mode)
 	aw.push(mustJSON(map[string]any{"op": "reload_tunables"}))
 	if !s.commitAdmin(r.Context(), w, aw) {
@@ -651,6 +681,7 @@ func (s *Server) handleSpawnModeSet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("spawn_mode", "mode", req.Mode)
 	// 通知主服立即刷新运行参数；后台也会按缓存周期生效。
 	aw.push(mustJSON(map[string]any{"op": "reload_tunables"}))
@@ -680,6 +711,7 @@ func (s *Server) handleSkillGainModeSet(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("skill_gain_mode", "mode", req.Mode)
 	aw.push(mustJSON(map[string]any{"op": "reload_tunables"}))
 	if !s.commitAdmin(r.Context(), w, aw) {
@@ -876,6 +908,7 @@ func (s *Server) handlePlayerUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	detail, _ := json.Marshal(req)
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("player_update", strconv.FormatInt(req.UID, 10), string(detail))
 	aw.push(mustJSON(map[string]any{"op": "refresh_player", "uid": req.UID}))
 	if !s.commitAdmin(ctx, w, aw) {
@@ -979,6 +1012,7 @@ func (s *Server) handleBan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	action := "unban"
 	if req.Banned {
 		action = "ban"

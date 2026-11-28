@@ -115,6 +115,7 @@ func (s *Server) handleHookProfileSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	aw := adminWrite{admin: adminOf(r)}
+	aw.markBusinessApplied()
 	aw.audit("hook_profile", req.ItemID, mustJSON(req))
 	aw.push(mustJSON(map[string]any{"op": "reload_tunables"}))
 	if !s.commitAdmin(r.Context(), w, aw) {

@@ -163,6 +163,9 @@ func TestAdminAuditFailureAbortsQueueWrite(t *testing.T) {
 	if code < 500 || code > 599 {
 		t.Fatalf("审计写入失败时应回 5xx，实得状态 %d，响应 %s", code, body)
 	}
+	if !strings.Contains(body, "操作未生效") || !strings.Contains(body, "可重试") {
+		t.Fatalf("纯队列操作失败时必须说明未生效且可重试，实得 %s", body)
+	}
 	if n := countQueue(t, db, "grant_item"); n != 0 {
 		t.Fatalf("审计失败后 admin_queue 不应留下 grant_item 指令，实得 %d 条", n)
 	}
@@ -193,5 +196,38 @@ func TestAdminQueueFailureRollsBackAudit(t *testing.T) {
 	}
 	if n := countAudit(t, db, "grant_item"); n != 0 {
 		t.Fatalf("指令入队失败时 audit_log 应整笔回滚，实得 %d 条 grant_item 审计", n)
+	}
+}
+
+// TestBusinessWriteFailureResponseExplainsAppliedState 覆盖"业务已经落库、审计/队列
+// 随后失败"的场景：响应必须明确告诉管理员业务已生效、不要重复提交，避免重发导致
+// 参数被改两次；同时审计与队列仍须整笔回滚。
+func TestBusinessWriteFailureResponseExplainsAppliedState(t *testing.T) {
+	db := testDB(t)
+	seedAdmin(t, db)
+	if _, err := db.SQL.Exec(`CREATE TRIGGER fail_tunable_audit BEFORE INSERT ON audit_log
+		WHEN NEW.action='tunable'
+		BEGIN SELECT RAISE(ABORT,'tunable 审计写入被拒绝'); END`); err != nil {
+		t.Fatalf("创建审计触发器失败: %v", err)
+	}
+	base, token := startQueueTestServer(t, db)
+
+	code, body := adminPost(t, base, token, "/api/tunables",
+		`{"key":"bite_probability","value":"0.37"}`)
+	if code < 500 || code > 599 {
+		t.Fatalf("审计写入失败时应回 5xx，实得状态 %d，响应 %s", code, body)
+	}
+	if !strings.Contains(body, "业务已生效") || !strings.Contains(body, "请勿重复提交") {
+		t.Fatalf("业务已落库时响应必须说明已生效且不要重复提交，实得 %s", body)
+	}
+	value, ok, err := db.TunableGet(context.Background(), "bite_probability")
+	if err != nil || !ok || value != "0.37" {
+		t.Fatalf("业务写入应保留，实得 value=%q ok=%v err=%v", value, ok, err)
+	}
+	if n := countAudit(t, db, "tunable"); n != 0 {
+		t.Fatalf("审计失败后 audit_log 不应留下 tunable 行，实得 %d 条", n)
+	}
+	if n := countQueue(t, db, "reload_tunables"); n != 0 {
+		t.Fatalf("审计失败后 admin_queue 不应留下 reload_tunables，实得 %d 条", n)
 	}
 }
