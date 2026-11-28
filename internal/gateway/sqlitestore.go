@@ -56,13 +56,20 @@ func (s *SQLiteStore) LookupToken(ctx context.Context, token string) (TokenInfo,
 
 // lookupByPrefix 前缀匹配（token 以 logintoken 开头）。
 //
-// 用 substr 做字面前缀比较，不用 LIKE：这里的 prefix 是客户端输入，LIKE 会把其中的
-// % 和 _ 当成通配符，于是 %|%|1000001|% 这类伪造串能命中任意已签发记录、冒用他人 uid。
-// substr 只做字面量比较，通配符在查询里彻底失去特殊含义。
+// 入口先拒绝客户端输入里的 LIKE 通配符；查询层再用 substr 做字面前缀比较。
+// 两层独立防线各自都有测试：LIKE 会把 % 和 _ 当成通配符，于是 %|%|1000001|%
+// 这类伪造串能命中任意已签发记录、冒用他人 uid。
 func (s *SQLiteStore) lookupByPrefix(ctx context.Context, prefix string) (TokenInfo, bool, error) {
 	if len(prefix) < 8 || hasTokenWildcard(prefix) {
 		return TokenInfo{}, false, nil
 	}
+	return s.lookupByLiteralPrefix(ctx, prefix)
+}
+
+// lookupByLiteralPrefix 执行前缀查询本身，调用方负责先做入口校验。
+// 单独拆出查询层是为了让测试能在入口 guard 开启时直接锁定 SQL 语义：
+// 若这里退回 LIKE ?||'%'，含 % 或 _ 的伪造前缀会重新命中任意已签发记录。
+func (s *SQLiteStore) lookupByLiteralPrefix(ctx context.Context, prefix string) (TokenInfo, bool, error) {
 	var infoJSON string
 	var expiresF float64
 	err := s.DB.SQL.QueryRowContext(ctx,

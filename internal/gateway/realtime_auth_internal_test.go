@@ -173,6 +173,53 @@ func TestSQLiteStoreLookupByLogintokenAndPrefix(t *testing.T) {
 	}
 }
 
+// TestSQLiteStorePrefixQueryIsLiteral 独立锁定查询层的前缀语义：入口 guard 仍开启时，
+// 直接调用 SQL 查询也必须把 % 和 _ 当普通字符。若 substr 改回 LIKE ?||'%'，
+// 本测试会单独失败，不依赖 realtime 端到端的双层防御。
+func TestSQLiteStorePrefixQueryIsLiteral(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "gw-token.db"))
+	if err != nil {
+		t.Fatalf("打开测试库失败: %v", err)
+	}
+	defer db.Close()
+	if err := db.Migrate(); err != nil {
+		t.Fatalf("迁移测试库失败: %v", err)
+	}
+	s := NewSQLiteStore(db, slog.New(slog.DiscardHandler))
+	ctx := context.Background()
+
+	const uid = int64(1000001)
+	issued := NewToken(uid)
+	if err := s.SaveToken(ctx, issued, TokenInfo{Userid: uid, IssuedAt: time.Now().Unix()}, time.Hour); err != nil {
+		t.Fatalf("登记签发 token 失败: %v", err)
+	}
+
+	// 前提：入口 guard 对这条伪造前缀仍然生效；这里测的是另一层，不会绕过生产路径。
+	const forgedPrefix = "%|%|1000001|%"
+	if _, found, err := s.lookupByPrefix(ctx, forgedPrefix); err != nil || found {
+		t.Fatalf("入口 guard 应拒绝伪造前缀 %q：found=%v err=%v", forgedPrefix, found, err)
+	}
+
+	// LIKE 会命中 NewToken 的 hex|unix|1000001|base64 结构，
+	// substr 则只接受真正以该前缀开头的记录。
+	got, found, err := s.lookupByLiteralPrefix(ctx, forgedPrefix)
+	if err != nil {
+		t.Fatalf("字面量前缀查询出错: %v", err)
+	}
+	if found {
+		t.Fatalf("查询层把伪造前缀 %q 当成 LIKE 通配串，命中 uid=%d：substr 保护已退化", forgedPrefix, got.Userid)
+	}
+
+	// 对照：真实前缀仍应在查询层命中，避免测试只是在断言“一律查不到”。
+	got, found, err = s.lookupByLiteralPrefix(ctx, issued[:64])
+	if err != nil {
+		t.Fatalf("真实前缀查询出错: %v", err)
+	}
+	if !found || got.Userid != uid {
+		t.Fatalf("真实前缀 %q 应命中 uid=%d：found=%v got=%+v", issued[:64], uid, found, got)
+	}
+}
+
 // TestSQLiteStoreLookupErrorNotReportedAsNotFound 锁住两条查询路径的 err 语义：
 // realtime.go 靠 err 区分「查询异常」与「未登记」。前缀查询若把读库错误当成未命中
 // 静默吞掉，线上库损坏时只会表现为「所有玩家突然未登记」，日志里看不到真实原因。
