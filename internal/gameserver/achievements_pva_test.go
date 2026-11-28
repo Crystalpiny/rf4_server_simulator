@@ -105,6 +105,42 @@ func TestAchievement210PVAStickCastLanded(t *testing.T) {
 	}
 }
 
+// 咬钩前服务端重启仍恢复同一杆的咬钩 timer；PVA 标记必须随快照恢复，
+// 否则这一杆上鱼时 210 会静默漏判。
+func TestAchievement210PVAReadySurvivesServerRestart(t *testing.T) {
+	s, db := newRigTestServer(t)
+	registerAchievementHandlers(s.dispatch)
+	t.Cleanup(func() { stopFishingRecoveryTimers(s) })
+	ctx := t.Context()
+	sess, rod := pvaAchievementRig(t, s)
+
+	baitTestMount(t, s, rod, "pva_stick_m", 1, 0)
+	castRigToWater(t, s, sess, rod)
+	saved, err := db.LoadFishingState(ctx, sess.Userid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved == nil || !saved.PVAReady {
+		t.Fatalf("入水后快照应保存 PVAReady=true，实得 %+v", saved)
+	}
+
+	restarted := newFishingRecoveryServer(t, db)
+	registerAchievementHandlers(restarted.dispatch)
+	restartedSess := newProbeSess(restarted)
+	rst := restarted.fishingStateForRod(restartedSess.Userid, rod)
+	rst.mu.Lock()
+	ready := rst.PVAReady
+	rst.mu.Unlock()
+	if !ready {
+		t.Fatal("重启恢复后 PVAReady 应为 true")
+	}
+
+	got := landFishOnRig(t, restarted, restartedSess, rst, 1)
+	if !got[210].unlocked || !got[210].claimed {
+		t.Errorf("重启恢复的 PVA 杆上鱼后成就 210 应解锁，实际 %+v", got[210])
+	}
+}
+
 // 没有 PVA 棒：无窝料或只挂普通窝料（品类 46）抛投上鱼都不解锁 210。
 func TestAchievement210WithoutPVAStickNotUnlocked(t *testing.T) {
 	// 两个场景各自起一套环境：14/4 结算后本杆进入「待入护/放生」窗口，

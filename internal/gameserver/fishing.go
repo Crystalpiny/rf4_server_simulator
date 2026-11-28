@@ -32,9 +32,9 @@ type FishState struct {
 	reelWear   fightReelWear
 	CastActive bool
 	CastM      float64 // 本杆 14/2 上报的实际落点距离（米），不是钓具理论最大值
-	// PVAReady 是「本杆入水确实消耗掉一份 PVA 棒（品类 30）」的进程内标记，
-	// 上鱼事件按它判定成就 210。它只对应当前这一杆，不持久化——离线期间没有
-	// 钓组在水中，重连后的下一杆会按自己的入水扣料结果重新写。
+	// PVAReady 是「本杆入水确实消耗掉一份 PVA 棒（品类 30）」的标记，
+	// 上鱼事件按它判定成就 210。它与 CastTs 一起随钓鱼快照落库，重启后仍
+	// 对应同一杆；新抛投由 resetCast 清零，再由本杆入水扣料重写。
 	PVAReady   bool
 	InWater    bool
 	NeedBite   bool
