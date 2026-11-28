@@ -596,7 +596,10 @@ func (s *Server) fishingRelease(ctx *Ctx) ([]byte, bool) {
 			ctx.Sess.Push2_6(max64(1, extraLevel-1))
 		}
 		if !replayed && pending.NamedID != "" {
-			s.DB.NamedFishNoteRecatch(cctx, pending.NamedID)
+			if err := s.DB.NamedFishNoteRecatch(cctx, pending.NamedID); err != nil {
+				// 计数只用于展示，失败不阻断放生主流程。
+				ctx.Log.Warn("命名鱼重复钓获计数失败", "fish", shortGUID(pending.NamedID), "err", err)
+			}
 		}
 		if !replayed {
 			// 放生的鱼在 14/4 结算时已落 catch_log 并点亮图鉴，这里补推新档案，
