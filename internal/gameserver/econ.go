@@ -535,7 +535,7 @@ func (s *Server) fishingRelease(ctx *Ctx) ([]byte, bool) {
 		}
 		ratio := s.tunableF("release_xp_ratio", 0.5)
 		bonus := int64(math.Round(float64(base) * ratio))
-		result, gifts, replayed, err := s.releaseCatchOnce(cctx, uid, pending.FishGUID, bonus, rigType)
+		result, gifts, replayed, err := s.releaseCatchOnce(cctx, uid, pending.FishGUID, bonus, rigType, pending.Grade)
 		if err != nil {
 			ctx.Log.Warn("放生保存失败", "err", err)
 			ctx.ReplyFailure("System.IO.IOException", "放生未能保存，请重试")
@@ -566,7 +566,7 @@ func (s *Server) fishingRelease(ctx *Ctx) ([]byte, bool) {
 				base = b
 			}
 			extraReleaseBonus := int64(math.Round(float64(base) * ratio))
-			res, extraGifts, replayedExtra, err := s.releaseCatchOnce(cctx, uid, f.FishGUID, extraReleaseBonus, rigType)
+			res, extraGifts, replayedExtra, err := s.releaseCatchOnce(cctx, uid, f.FishGUID, extraReleaseBonus, rigType, f.Grade)
 			if err != nil {
 				ctx.Log.Warn("14/6 多钩额外鱼放生失败", "fish", shortGUID(f.FishGUID), "err", err)
 				continue
@@ -625,8 +625,11 @@ func (s *Server) fishingRelease(ctx *Ctx) ([]byte, bool) {
 			}
 		}
 		s.notifyFishReleased(ctx.Sess, pending)
+		// 911 的计数在上面的放生事务里已经累加，直接读计数器装配事件；
+		// 912 仍只用本次放流鱼的档位判断。
 		s.evaluateAchievements(ctx, achievementEvent{
 			Kind: evFishReleased, Grade: pending.Grade,
+			RareReleased: s.rareReleasedCount(cctx, uid),
 		})
 	}
 	// 响应 807：{null, [811礼物行], 307, null, null, null}；未升级时 f1=null
