@@ -16,25 +16,8 @@ import (
 	"rf4server/internal/config"
 )
 
-// syncBuffer 是并发安全的日志缓冲：分配日志可能来自多个 goroutine。
-type syncBuffer struct {
-	mu  sync.Mutex
-	buf bytes.Buffer
-}
-
-func (b *syncBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Write(p)
-}
-
-func (b *syncBuffer) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
-}
-
 // captureLogs 返回把全部日志收进缓冲区的 logger，断言失败时能带上实际日志。
+// syncBuffer 定义在 session_panic_test.go（同包共享）。
 func captureLogs() (*slog.Logger, *syncBuffer) {
 	buf := &syncBuffer{}
 	return slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelInfo})), buf
