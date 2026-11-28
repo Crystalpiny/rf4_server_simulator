@@ -631,14 +631,20 @@ func (s *Server) fishingEndSettle(ctx *Ctx) ([]byte, bool) {
 	// 连续上鱼数只有真正结算（非回执重放）才算一条；中断已在计数器写入处清零。
 	if hasFish {
 		var streak int64
+		var streakErr error
 		if res != nil && !res.replayed {
-			streak = s.bumpCatchStreak(uid)
+			streak, streakErr = s.bumpCatchStreak(uid)
 		} else {
-			streak = s.playerCounter(cctx, uid, catchStreakKey)
+			streak, streakErr = s.catchStreakCount(cctx, uid)
 		}
-		s.evaluateAchievements(ctx, achievementEvent{
-			Kind: evFishLanded, WeightG: pending.WeightG, RigType: rigType, Bait: bait, Streak: streak,
-		})
+		if streakErr != nil {
+			// 读取/累加故障不能当成 0 或沿用旧值判定，否则会静默漏判或误判 904。
+			ctx.Log.Warn("连续上鱼计数读取失败，跳过成就判定", "uid", uid, "err", streakErr)
+		} else {
+			s.evaluateAchievements(ctx, achievementEvent{
+				Kind: evFishLanded, WeightG: pending.WeightG, RigType: rigType, Bait: bait, Streak: streak,
+			})
+		}
 	}
 	for _, cardGUID := range cardGUIDs {
 		if cardGUID == "" {
