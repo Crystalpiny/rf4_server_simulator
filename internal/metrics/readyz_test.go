@@ -3,7 +3,9 @@ package metrics
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 )
 
@@ -12,6 +14,21 @@ func readyzCode(s *Server) int {
 	rec := httptest.NewRecorder()
 	s.srv.Handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	return rec.Code
+}
+
+// TestServerReadyFieldIsAtomic 是普通 go test 也能抓到的确定性回归。
+//
+// SetReady 由主 goroutine 调用，/readyz handler 在观测端口的 goroutine 读取；
+// 字段退回普通 bool 后只有 -race 能报 data race，而 CI 门禁不跑 -race。
+func TestServerReadyFieldIsAtomic(t *testing.T) {
+	field, ok := reflect.TypeOf(Server{}).FieldByName("ready")
+	if !ok {
+		t.Fatal("Server 缺少 ready 字段")
+	}
+	want := reflect.TypeOf(atomic.Bool{})
+	if field.Type != want {
+		t.Fatalf("Server.ready 类型 = %v，期望 %v；普通 bool 会在 /readyz 与 SetReady 之间形成 data race", field.Type, want)
+	}
 }
 
 // TestReadyzReflectsSetReady 未就绪时必须 503，SetReady(true) 后必须 200。
