@@ -73,7 +73,9 @@ func startRealtimeOnly(t *testing.T, store Store) (addr string, srv *RealtimeSer
 
 	serverConn, peer := dialTunnelPair(t, "panic-test-psk")
 	t.Cleanup(func() { _ = peer.Close() })
-	tm := &TunnelManager{log: log, addr: "127.0.0.1:1"}
+	tm := newTestTunnelManager(t, nil)
+	tm.log = log
+	tm.addr = "127.0.0.1:1"
 	tm.conn = serverConn
 	tm.gen = 1
 
