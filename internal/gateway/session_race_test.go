@@ -25,7 +25,7 @@ var tunnelMetricsOnce sync.Once
 
 // ensureTunnelMetrics 初始化隧道指标（幂等）。
 func ensureTunnelMetrics() {
-	tunnelMetricsOnce.Do(func() { initTunnelMetrics(obsRegistry(nil)) })
+	tunnelMetricsOnce.Do(func() { _ = tunnelMetricsFor(obsRegistry(nil)) })
 }
 
 // newRaceTestSession 造一条只跑写者、不接真实网络的会话。
@@ -115,10 +115,12 @@ func TestSessionTeardownEnqueueRaceNoPanic(t *testing.T) {
 func TestAckEnqueueDoesNotBlockReadLoop(t *testing.T) {
 	ensureTestMetrics()
 	log := slog.New(slog.DiscardHandler)
+	tm := newTestTunnelManager(t, nil)
+	tm.log = log
 	srv := &RealtimeServer{
 		cfg:    config.Gateway{AckClientFrames: true, TransportKeepaliveSec: 3600},
 		log:    log,
-		tm:     &TunnelManager{log: log},
+		tm:     tm,
 		owners: map[string]uint64{},
 	}
 	server, client := net.Pipe()
