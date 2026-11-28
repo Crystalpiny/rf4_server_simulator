@@ -293,7 +293,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 // ---- 仪表盘 ----
 
 func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
-	payload := map[string]any{"pg": "up"}
+	// 默认口令/默认签名密钥的告警在总览页直接可见，不必翻日志；匿名请求也需要看到。
+	payload := map[string]any{"pg": "up", "warnings": s.cfg.WeakWarnings()}
 	if u := s.updatePayload(); u != nil {
 		payload["update"] = u
 	}
