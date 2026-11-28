@@ -13,6 +13,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net"
@@ -487,7 +488,7 @@ func (a *app) actionHandler(action string) http.HandlerFunc {
 			if name == "" {
 				a.sup.StopAll()
 			} else {
-				a.sup.StopOne(name)
+				err = a.sup.StopOne(name)
 			}
 		case "restart":
 			if name == "" {
@@ -499,7 +500,7 @@ func (a *app) actionHandler(action string) http.HandlerFunc {
 			}
 		}
 		if err != nil {
-			httpError(w, err.Error())
+			actionError(w, err)
 			return
 		}
 		w.WriteHeader(204)
@@ -693,6 +694,18 @@ func httpError(w http.ResponseWriter, msg string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(500)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// actionError 启停动作的错误响应。name 来自 query，未知进程是调用方输入问题，
+// 回 404 而不是 500：面板能直接提示"未知进程"，也不会被当成服务端故障。
+func actionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, supervisor.ErrUnknownProcess) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	httpError(w, err.Error())
 }
 
 // normalizeLocal ":9500"/"9500" → "127.0.0.1:9500"；host:port 原样返回。

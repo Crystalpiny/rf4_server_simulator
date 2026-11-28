@@ -430,7 +430,12 @@ func (s *RealtimeServer) handleConn(nc net.Conn) {
 	// 这里再删，等于把刚存的状态删掉；放在 OPEN 之前则有 P1：sendOpen 失败
 	// 或撞上关闭提前返回，库里那份状态成了永远没人读的孤儿。
 	if sess.resumed {
-		_ = s.store.DeleteHandoff(context.Background(), token)
+		// 删除失败不能静默：残留的旧快照带着已被消费的 wire_id，客户端下次重连
+		// 会从更早的位置续流，整条下行解不开。写者启动后还会覆盖这一行，
+		// 所以只告警，不重试。
+		if err := s.store.DeleteHandoff(context.Background(), token); err != nil {
+			log.Warn("承接状态删除失败，旧快照可能残留", "err", err, "token_len", len(token))
+		}
 	}
 
 	go func() {
