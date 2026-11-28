@@ -319,11 +319,19 @@ const defaultIPUIDFile = "gateway_ip_uids.json"
 
 // ipUIDTable 按来源 IP 分配 userid：首次分配时读盘，之后常驻内存，
 // 每次新增条目都原子写回磁盘——分配结果落不了盘，重启后同一 IP 就会换号。
+// 读不明白时禁止写盘：磁盘上的旧表可能完好，写回等于把它覆盖成单行。
 type ipUIDTable struct {
 	mu     sync.Mutex
 	path   string
 	byHost map[string]int64
 	loaded bool
+	// persistable 表示允许写盘：只有「文件不存在（首次运行）」或「读表成功」才置真。
+	persistable bool
+	// saveBlockedLogged 保证「本次运行不落盘」只记一条 Error，不随每个新 IP 刷屏。
+	saveBlockedLogged bool
+	// readFile/renameFile 默认用 os.ReadFile/os.Rename，测试注入以模拟读失败与备份失败。
+	readFile   func(name string) ([]byte, error)
+	renameFile func(oldpath, newpath string) error
 }
 
 // newIPUIDTable 按配置解析映射表路径；未配置时用工作目录下的默认文件名。
@@ -332,7 +340,7 @@ func newIPUIDTable(cfg config.Gateway) *ipUIDTable {
 	if path == "" {
 		path = defaultIPUIDFile
 	}
-	return &ipUIDTable{path: path, byHost: map[string]int64{}}
+	return &ipUIDTable{path: path, byHost: map[string]int64{}, readFile: os.ReadFile, renameFile: os.Rename}
 }
 
 // uid 返回 host 的 userid；没有条目时取表中最大值 +1（不低于 base），并写回磁盘。
@@ -357,32 +365,75 @@ func (t *ipUIDTable) uid(host string, base int64, log *slog.Logger) int64 {
 	return uid
 }
 
-// loadLocked 只在首次分配时读一次盘。文件不存在属于首次运行；
-// 读不出或 JSON 损坏时按空表继续发号，但必须留痕，否则整张表会静默清零。
+// loadLocked 只在首次分配时读一次盘，并决定本次运行能否写盘。
+// 只有「文件不存在（首次运行）」和「读表成功」允许写；读不出时磁盘上的表可能完好，
+// 若按空表发号后无条件写回，整张旧表会被覆盖成单行，其它 IP 的历史 userid 全部丢失。
 func (t *ipUIDTable) loadLocked(log *slog.Logger) {
 	if t.loaded {
 		return
 	}
 	t.loaded = true
-	b, err := os.ReadFile(t.path)
+	readFile := t.readFile
+	if readFile == nil {
+		readFile = os.ReadFile
+	}
+	b, err := readFile(t.path)
 	if err != nil {
-		if !errors.Is(err, fs.ErrNotExist) {
-			log.Error("读取 LAN userid 映射表失败，按空表发号", "path", t.path, "err", err)
+		if errors.Is(err, fs.ErrNotExist) {
+			// 首次运行：没有旧表可丢，正常建表。
+			t.persistable = true
+			return
 		}
+		log.Error("读取 LAN userid 映射表失败，按空表发号且本次运行不写盘",
+			"path", t.path, "err", err)
 		return
 	}
 	var m map[string]int64
 	if err := json.Unmarshal(b, &m); err != nil {
 		log.Error("LAN userid 映射表损坏，按空表发号", "path", t.path, "err", err)
+		t.persistable = t.backupCorruptLocked(log)
 		return
 	}
 	if m != nil {
 		t.byHost = m
 	}
+	t.persistable = true
+}
+
+// backupCorruptLocked 把损坏的表改名留证，只有改名成功才允许以空表重建；
+// 改名失败说明坏文件还占着位，此时写盘等于覆盖唯一的历史线索，必须继续禁止写。
+func (t *ipUIDTable) backupCorruptLocked(log *slog.Logger) bool {
+	renameFile := t.renameFile
+	if renameFile == nil {
+		renameFile = os.Rename
+	}
+	backup := t.path + ".corrupt-" + strconv.FormatInt(time.Now().Unix(), 10)
+	// 同一秒内重复备份（崩溃循环重启）时补纳秒后缀：os.Rename 会覆盖已存在的目标，
+	// 覆盖上一份备份等于销毁唯一的历史线索。
+	if _, err := os.Stat(backup); err == nil {
+		backup += "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+	if err := renameFile(t.path, backup); err != nil {
+		log.Error("备份损坏的 LAN userid 映射表失败，本次运行不写盘",
+			"path", t.path, "backup", backup, "err", err)
+		return false
+	}
+	log.Error("损坏的 LAN userid 映射表已改名备份，将以空表重建",
+		"path", t.path, "backup", backup)
+	return true
 }
 
 // saveLocked 把整张表原子写回；失败只记录，不影响已经分配的 userid。
+// 读表没成功时跳过写盘：此时内存表不代表磁盘旧表，写回就是把它覆盖成单行。
 func (t *ipUIDTable) saveLocked(log *slog.Logger) {
+	if !t.persistable {
+		if !t.saveBlockedLogged {
+			t.saveBlockedLogged = true
+			log.Error("LAN userid 映射表本次运行不会落盘，重启后这些 IP 可能换号",
+				"path", t.path)
+		}
+		return
+	}
 	b, err := json.MarshalIndent(t.byHost, "", "  ")
 	if err != nil {
 		log.Error("序列化 LAN userid 映射表失败", "path", t.path, "err", err)
