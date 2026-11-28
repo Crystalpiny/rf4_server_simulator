@@ -634,6 +634,12 @@ func (s *Server) fishingEndSettle(ctx *Ctx) ([]byte, bool) {
 	// 上鱼事件交给成就规则判断一次；2/8 弹窗排在 801 应答之后。
 	// 连续上鱼数只有真正结算（非回执重放）才算一条；中断已在计数器写入处清零。
 	if hasFish {
+		// 竿型/轮型只认本杆解析成功的装备：竿 GUID 无效时 castDistanceForRig 会回退
+		// 到背包里的任意一支竿算投距，那支竿不是玩家这一杆的竿，不能拿它判成就。
+		var achRodType, achReelType int64
+		if castProf.RodParsed {
+			achRodType, achReelType = castProf.RodType, castProf.ReelType
+		}
 		var streak int64
 		var streakErr error
 		if res != nil && !res.replayed {
@@ -647,6 +653,7 @@ func (s *Server) fishingEndSettle(ctx *Ctx) ([]byte, bool) {
 		} else {
 			s.evaluateAchievements(ctx, achievementEvent{
 				Kind: evFishLanded, WeightG: pending.WeightG, RigType: rigType, Bait: bait,
+				RodType: achRodType, ReelType: achReelType,
 				Streak: streak, PVALoaded: pvaLoaded,
 			})
 		}
