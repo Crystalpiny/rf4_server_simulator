@@ -65,7 +65,11 @@ func TestRareReleasedCountOnlyCountsRareReleases(t *testing.T) {
 		release911(t, s, sess, rareFish911(i, recordTrophyGrade), int64(i))
 	}
 	release911(t, s, sess, rareFish911(50, 2), 10)
-	if got := s.rareReleasedCount(ctx, uid); got != 3 {
+	got, err := s.rareReleasedCount(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 3 {
 		t.Fatalf("稀有鱼放生计数 = %d，期望 3（grade<3 的放生不该计入）", got)
 	}
 
@@ -85,7 +89,11 @@ func TestRareReleasedCountOnlyCountsRareReleases(t *testing.T) {
 		Tree: keepTree, DecodeOK: true, ExpectResponse: true, Log: logging.Discard()}); !handled || len(body) == 0 {
 		t.Fatal("14/5 入护未正常返回")
 	}
-	if got := s.rareReleasedCount(ctx, uid); got != 3 {
+	got, err = s.rareReleasedCount(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 3 {
 		t.Fatalf("入护后稀有鱼放生计数 = %d，期望仍为 3（入护不是放生）", got)
 	}
 
@@ -95,7 +103,11 @@ func TestRareReleasedCountOnlyCountsRareReleases(t *testing.T) {
 	} else if !replayed {
 		t.Fatal("同一尾鱼再次放生应命中回执、判为重放")
 	}
-	if got := s.rareReleasedCount(ctx, uid); got != 3 {
+	got, err = s.rareReleasedCount(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 3 {
 		t.Fatalf("重放放生后计数 = %d，期望 3（重放不重复计数）", got)
 	}
 }
@@ -149,7 +161,11 @@ func TestAchievement911NeedsTenRareReleases(t *testing.T) {
 	} else if claimed {
 		t.Error("911 已点亮后 UnlockAndClaimAchievement 应为幂等 false")
 	}
-	if got := s.rareReleasedCount(ctx, uid); got != 11 {
+	got, err := s.rareReleasedCount(ctx, uid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 11 {
 		t.Errorf("第 11 次放生后计数 = %d，期望 11", got)
 	}
 }

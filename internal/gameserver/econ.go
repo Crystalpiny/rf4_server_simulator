@@ -627,10 +627,16 @@ func (s *Server) fishingRelease(ctx *Ctx) ([]byte, bool) {
 		s.notifyFishReleased(ctx.Sess, pending)
 		// 911 的计数在上面的放生事务里已经累加，直接读计数器装配事件；
 		// 912 仍只用本次放流鱼的档位判断。
-		s.evaluateAchievements(ctx, achievementEvent{
-			Kind: evFishReleased, Grade: pending.Grade,
-			RareReleased: s.rareReleasedCount(cctx, uid),
-		})
+		rareReleased, rareErr := s.rareReleasedCount(cctx, uid)
+		if rareErr != nil {
+			// 读取故障不能当成「未达标」，否则会静默漏掉本次成就判定。
+			ctx.Log.Warn("累计放生稀有鱼计数读取失败，跳过成就判定", "uid", uid, "err", rareErr)
+		} else {
+			s.evaluateAchievements(ctx, achievementEvent{
+				Kind: evFishReleased, Grade: pending.Grade,
+				RareReleased: rareReleased,
+			})
+		}
 	}
 	// 响应 807：{null, [811礼物行], 307, null, null, null}；未升级时 f1=null
 	//（官服未升级放流样本形态，见 monitor docs/LEVEL_UP_GIFT_CARDS.md）。

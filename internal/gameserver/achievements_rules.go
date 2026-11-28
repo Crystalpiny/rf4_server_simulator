@@ -272,12 +272,14 @@ const rareReleasedCounterKey = "rare_released"
 // rareReleasedCount 读 911 的累计计数。放生不改 catch_log.source（只有入护才把
 // 同一行抬成 'keep'），所以「已放生」不能按 source 统计，只能读放生路径自己记
 // 下的计数器。
-func (s *Server) rareReleasedCount(ctx context.Context, uid int64) int64 {
+func (s *Server) rareReleasedCount(ctx context.Context, uid int64) (int64, error) {
 	var n int64
-	_ = s.DB.SQL.QueryRowContext(ctx,
+	if err := s.DB.SQL.QueryRowContext(ctx,
 		`SELECT COALESCE(value,0) FROM player_counters WHERE uid=? AND key=?`,
-		uid, rareReleasedCounterKey).Scan(&n)
-	return n
+		uid, rareReleasedCounterKey).Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 // evaluateAchievements 是唯一的判定入口，由玩法事件在发生后调用一次。
