@@ -32,6 +32,10 @@ type FishState struct {
 	reelWear   fightReelWear
 	CastActive bool
 	CastM      float64 // 本杆 14/2 上报的实际落点距离（米），不是钓具理论最大值
+	// PVAReady 是「本杆入水确实消耗掉一份 PVA 棒（品类 30）」的标记，
+	// 上鱼事件按它判定成就 210。它与 CastTs 一起随钓鱼快照落库，重启后仍
+	// 对应同一杆；新抛投由 resetCast 清零，再由本杆入水扣料重写。
+	PVAReady   bool
 	InWater    bool
 	NeedBite   bool
 	PosX       float64
@@ -3174,9 +3178,11 @@ func (s *Server) scheduleBiteState(sess *Session, st *FishState, preserveHooked,
 		st.CastTs = now
 	}
 	if resetCast {
-		// 新的一杆：还没确认在水中，等 14/7 的 0x400。
+		// 新的一杆：还没确认在水中，等 14/7 的 0x400。上一杆是否抛了 PVA 棒
+		// 的记录同样作废，由本杆自己的入水扣料重写。
 		st.InWater = false
 		st.NeedBite = false
+		st.PVAReady = false
 		resetMarineLayerLocked(st)
 	}
 	st.Bonus = bonus
@@ -3760,10 +3766,64 @@ func (s *Server) notifyFishEscape(sess *Session, f *RolledFish, reason string) {
 	sess.pushChatProbe(27, 3, "", fishTVKv(text, weight))
 }
 
+// catchStreakKey 是「连续上鱼不断档」计数器，与 escapes 等共用 player_counters：
+// 成功上鱼 +1，escapes/line_breaks/component_breaks/rod_breaks 任一发生归零。
+// 存库而不是放内存，换线重连或进程重启后连续数仍在。
+const catchStreakKey = "catch_streak"
+
+// fishingInterruptionCounters 是「这一杆没把鱼拿上来」的中断事件集合：鱼跑了、
+// 线断了、竿或钓组组件断了都算一杆落空。新加中断事件时把 key 加进这里即可；
+// 清零只写在 bumpFishingCounter 一处，不会漏。
+// reel_breaks 不在此列：渔轮被拉坏时鱼仍咬钩、搏鱼继续（KeepFight），不算中断。
+var fishingInterruptionCounters = map[string]bool{
+	"escapes":          true,
+	"line_breaks":      true,
+	"component_breaks": true,
+	"rod_breaks":       true,
+}
+
+// catchStreakCount 读取当前连续上鱼数。读取失败必须上抛，不能当成 0 判定成就。
+func (s *Server) catchStreakCount(ctx context.Context, uid int64) (int64, error) {
+	var streak int64
+	if err := s.DB.SQL.QueryRowContext(ctx,
+		`SELECT COALESCE(value,0) FROM player_counters WHERE uid=? AND key=?`,
+		uid, catchStreakKey).Scan(&streak); err != nil {
+		return 0, err
+	}
+	return streak, nil
+}
+
+// bumpCatchStreak 在成功上鱼时把连续上鱼数 +1，返回累加后的连续条数。
+func (s *Server) bumpCatchStreak(uid int64) (int64, error) {
+	if s.DB == nil {
+		return 0, nil
+	}
+	ctx := s.dbCtx()
+	if err := store.BumpPlayerCounter(ctx, s.DB.SQL, uid, catchStreakKey); err != nil {
+		return 0, err
+	}
+	return s.catchStreakCount(ctx, uid)
+}
+
+// resetCatchStreak 把连续上鱼数清零；行不存在时不写，避免凭空造出计数行。
+func (s *Server) resetCatchStreak(uid int64) error {
+	if s.DB == nil {
+		return nil
+	}
+	return store.ResetPlayerCounter(s.dbCtx(), s.DB.SQL, uid, catchStreakKey)
+}
+
 // bumpFishingCounter 增加玩家钓鱼计数器（escapes 等），幂等累加。
 func (s *Server) bumpFishingCounter(uid int64, key string) {
 	if s.DB == nil {
 		return
+	}
+	// 中断类事件在同一处把连续上鱼数清零：所有中断点在计数时都只调本函数，
+	// 不另写清零逻辑——漏清一处就等于断线后连续数还在涨。
+	if fishingInterruptionCounters[key] {
+		if err := s.resetCatchStreak(uid); err != nil && s.log != nil {
+			s.log.Warn("连续上鱼计数清零失败", "uid", uid, "key", key, "err", err)
+		}
 	}
 	_, _ = s.DB.SQL.ExecContext(s.dbCtx(), `
 		INSERT INTO player_counters(uid, key, value) VALUES(?,?,1)
