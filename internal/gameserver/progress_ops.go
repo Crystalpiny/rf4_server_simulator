@@ -629,8 +629,15 @@ func (s *Server) fishingEndSettle(ctx *Ctx) ([]byte, bool) {
 	}
 	// 上鱼事件交给成就规则判断一次；2/8 弹窗排在 801 应答之后。
 	if hasFish {
+		// 竿型/轮型只认本杆解析成功的装备：竿 GUID 无效时 castDistanceForRig 会回退
+		// 到背包里的任意一支竿算投距，那支竿不是玩家这一杆的竿，不能拿它判成就。
+		var achRodType, achReelType int64
+		if castProf.RodParsed {
+			achRodType, achReelType = castProf.RodType, castProf.ReelType
+		}
 		s.evaluateAchievements(ctx, achievementEvent{
 			Kind: evFishLanded, WeightG: pending.WeightG, RigType: rigType, Bait: bait,
+			RodType: achRodType, ReelType: achReelType,
 		})
 	}
 	for _, cardGUID := range cardGUIDs {
