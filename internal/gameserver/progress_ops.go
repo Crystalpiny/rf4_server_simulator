@@ -374,6 +374,10 @@ func (s *Server) fishingEndSettle(ctx *Ctx) ([]byte, bool) {
 	rigType := st.RigType
 	gearGUID := st.GearGuid
 	bait := st.Bait
+	// 成就 210「抛掷装备 PVA 棒的钓组」：PVA 棒是挂在钓组上的饵料载荷（品类 30），
+	// 不是钓组类型，没法像 206/211 那样近似成 rigType。判据取本杆入水扣料结果，
+	// 由 14/7/14/3 的入水扣料写进状态，这里只读。
+	pvaLoaded := st.PVAReady
 	st.mu.Unlock()
 	// 收竿即终局：先把这一竿累计的渔轮磨损落库。
 	s.settleFightReelWearState(s.dbCtx(), st, uid, "14/4")
@@ -631,6 +635,7 @@ func (s *Server) fishingEndSettle(ctx *Ctx) ([]byte, bool) {
 	if hasFish {
 		s.evaluateAchievements(ctx, achievementEvent{
 			Kind: evFishLanded, WeightG: pending.WeightG, RigType: rigType, Bait: bait,
+			PVALoaded: pvaLoaded,
 		})
 	}
 	for _, cardGUID := range cardGUIDs {
