@@ -285,6 +285,8 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		"audits":   audits,
 		"tunables": len(tunables),
 		"pg":       "up",
+		// 默认口令/默认签名密钥的告警在总览页直接可见，不必翻日志。
+		"warnings": s.cfg.WeakWarnings(),
 	}
 	if u := s.updatePayload(); u != nil {
 		payload["update"] = u

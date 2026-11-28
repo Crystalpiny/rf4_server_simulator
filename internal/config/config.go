@@ -6,6 +6,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -94,11 +95,61 @@ func (g *Game) KeepaliveInterval() time.Duration {
 }
 
 type Admin struct {
-	HTTPAddr  string `yaml:"http_addr"` // 仅 cmd/admin 独立调试监听，如 :8080
+	HTTPAddr  string `yaml:"http_addr"` // 仅 cmd/admin 独立监听；默认只绑回环，需要局域网访问时显式改成 :8080
 	JWTSecret string `yaml:"jwt_secret"`
 	ObsAddr   string `yaml:"obs_addr"`
 	Username  string `yaml:"username"` // 管理员账号（以配置为准，启动时同步）
 	Password  string `yaml:"password"` // 管理员密码（明文进 yaml，注意文件权限）
+}
+
+// 本地开箱默认值：发布包首次启动即可登录管理后台，对外开放前必须替换。
+const (
+	DefaultAdminUsername  = "admin"
+	DefaultAdminPassword  = "admin123"
+	DefaultAdminJWTSecret = "change-me"
+)
+
+// EffectiveCredentials 返回启动时应同步到 admin_user 的账号与密码。
+// 用户名缺省时整体回退到本地默认 admin/admin123，与发布包开箱即用的约定一致；
+// 只配置了用户名而没有配置密码时保持空密码（由 WeakWarnings 提示），不擅自套用默认值。
+func (a Admin) EffectiveCredentials() (username, password string) {
+	if strings.TrimSpace(a.Username) == "" {
+		return DefaultAdminUsername, DefaultAdminPassword
+	}
+	return a.Username, a.Password
+}
+
+// ListenAllInterfaces 报告 http_addr 是否会监听非回环网卡。
+// 空地址、":8080" 形式的通配地址与主机名都算；只有回环地址和 localhost 不算。
+func (a Admin) ListenAllInterfaces() bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(a.HTTPAddr))
+	if err != nil {
+		host = strings.TrimSpace(a.HTTPAddr)
+	}
+	if host == "" {
+		return true
+	}
+	if strings.EqualFold(host, "localhost") {
+		return false
+	}
+	ip := net.ParseIP(host)
+	return ip == nil || !ip.IsLoopback()
+}
+
+// WeakWarnings 列出管理端仍在用默认凭据或默认签名密钥的项，供各进程启动时告警。
+// 返回空切片表示没有发现问题；文案直接给出配置项名，便于照着改。
+func (a Admin) WeakWarnings() []string {
+	out := []string{}
+	switch {
+	case strings.TrimSpace(a.Password) == "":
+		out = append(out, "管理后台密码为空：请设置 config.yaml 的 admin.password 或环境变量 RF4_ADMIN_PASSWORD")
+	case a.Password == DefaultAdminPassword:
+		out = append(out, "管理后台仍使用默认密码 "+DefaultAdminPassword+"：请修改 config.yaml 的 admin.password 或环境变量 RF4_ADMIN_PASSWORD，开放到局域网前必须替换")
+	}
+	if strings.TrimSpace(a.JWTSecret) == "" || a.JWTSecret == DefaultAdminJWTSecret {
+		out = append(out, "管理后台 JWT 签名密钥仍为默认值：请修改 config.yaml 的 admin.jwt_secret 或环境变量 RF4_ADMIN_JWT_SECRET，否则知道默认值的人可以自行签发管理令牌")
+	}
+	return out
 }
 
 // Launcher 本地启动器设置。
@@ -166,11 +217,11 @@ func defaults() *Config {
 			KeepaliveIntervalSec: 5.0,
 		},
 		Admin: Admin{
-			HTTPAddr:  ":8080",
-			JWTSecret: "change-me",
+			HTTPAddr:  "127.0.0.1:8080",
+			JWTSecret: DefaultAdminJWTSecret,
 			ObsAddr:   ":9503",
-			Username:  "admin",
-			Password:  "admin123",
+			Username:  DefaultAdminUsername,
+			Password:  DefaultAdminPassword,
 		},
 	}
 }

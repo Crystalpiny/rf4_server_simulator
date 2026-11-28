@@ -29,6 +29,7 @@ export default async function dashboard() {
   const enabled = RULES.filter(([k]) => on(k)).map(([, n]) => n);
   const overrideCount = stores.reduce((n, s) => n + (s.override_count || 0), 0);
   const pg = d.pg || '';
+  const warnings = Array.isArray(d.warnings) ? d.warnings : [];
   const port = location.port || '9500';
 
   const updates = [...audits]
@@ -79,6 +80,9 @@ export default async function dashboard() {
       themeMenu()),
     work([
       updSlot,
+      warnings.length
+        ? h('div', { class: 'alert' }, h('b', { text: '管理后台仍是默认凭据或默认密钥：' }), h('ul', { class: 'bullets' }, ...warnings.map((w) => h('li', { text: w }))))
+        : null,
       brief([
         [fmt(d.sessions), '在线玩家'],
         [fmt(d.players), '档案'],
