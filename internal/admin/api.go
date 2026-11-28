@@ -217,7 +217,9 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 401, "用户名或密码错误")
 		return
 	}
-	_ = s.db.AuditLogWrite(r.Context(), req.Username, "login", "", "")
+	if err := s.db.AuditLogWrite(r.Context(), req.Username, "login", "", ""); err != nil {
+		s.log.l.Error("登录审计写入失败", "admin", req.Username, "err", err)
+	}
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims{
 		Username: req.Username,
 		RegisteredClaims: jwt.RegisteredClaims{
@@ -547,7 +549,8 @@ func (s *Server) handleTunableSet(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 500, err.Error())
 		return
 	}
-	_ = s.db.AuditLogWrite(r.Context(), adminOf(r), "tunable", req.Key, req.Value)
+	aw := adminWrite{admin: adminOf(r)}
+	aw.audit("tunable", req.Key, req.Value)
 	// 两个限时活动互斥：开启任一个自动关闭另一个。5012 同时出现阶段 5/6 时
 	// 客户端只显示新年入口，周年面板会变成不可达。
 	if req.Value == "1" {
@@ -556,11 +559,14 @@ func (s *Server) handleTunableSet(w http.ResponseWriter, r *http.Request) {
 				httpError(w, 500, err.Error())
 				return
 			}
-			_ = s.db.AuditLogWrite(r.Context(), adminOf(r), "tunable", peer, "0")
+			aw.audit("tunable", peer, "0")
 		}
 	}
 	// 通知主服立即刷新运行参数；后台也会按缓存周期生效。
-	_ = s.db.QueuePush(r.Context(), mustJSON(map[string]any{"op": "reload_tunables"}))
+	aw.push(mustJSON(map[string]any{"op": "reload_tunables"}))
+	if !s.commitAdmin(r.Context(), w, aw) {
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -608,8 +614,12 @@ func (s *Server) handleBiteModeSet(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 500, err.Error())
 		return
 	}
-	_ = s.db.AuditLogWrite(r.Context(), adminOf(r), "bite_mode", "mode", req.Mode)
-	_ = s.db.QueuePush(r.Context(), mustJSON(map[string]any{"op": "reload_tunables"}))
+	aw := adminWrite{admin: adminOf(r)}
+	aw.audit("bite_mode", "mode", req.Mode)
+	aw.push(mustJSON(map[string]any{"op": "reload_tunables"}))
+	if !s.commitAdmin(r.Context(), w, aw) {
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true, "mode": req.Mode})
 }
 
@@ -640,9 +650,13 @@ func (s *Server) handleSpawnModeSet(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 500, err.Error())
 		return
 	}
-	_ = s.db.AuditLogWrite(r.Context(), adminOf(r), "spawn_mode", "mode", req.Mode)
+	aw := adminWrite{admin: adminOf(r)}
+	aw.audit("spawn_mode", "mode", req.Mode)
 	// 通知主服立即刷新运行参数；后台也会按缓存周期生效。
-	_ = s.db.QueuePush(r.Context(), mustJSON(map[string]any{"op": "reload_tunables"}))
+	aw.push(mustJSON(map[string]any{"op": "reload_tunables"}))
+	if !s.commitAdmin(r.Context(), w, aw) {
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true, "mode": req.Mode})
 }
 
@@ -665,8 +679,12 @@ func (s *Server) handleSkillGainModeSet(w http.ResponseWriter, r *http.Request) 
 		httpError(w, 500, err.Error())
 		return
 	}
-	_ = s.db.AuditLogWrite(r.Context(), adminOf(r), "skill_gain_mode", "mode", req.Mode)
-	_ = s.db.QueuePush(r.Context(), mustJSON(map[string]any{"op": "reload_tunables"}))
+	aw := adminWrite{admin: adminOf(r)}
+	aw.audit("skill_gain_mode", "mode", req.Mode)
+	aw.push(mustJSON(map[string]any{"op": "reload_tunables"}))
+	if !s.commitAdmin(r.Context(), w, aw) {
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true, "mode": req.Mode})
 }
 
@@ -857,8 +875,12 @@ func (s *Server) handlePlayerUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	detail, _ := json.Marshal(req)
-	_ = s.db.AuditLogWrite(ctx, adminOf(r), "player_update", strconv.FormatInt(req.UID, 10), string(detail))
-	_ = s.db.QueuePush(ctx, mustJSON(map[string]any{"op": "refresh_player", "uid": req.UID}))
+	aw := adminWrite{admin: adminOf(r)}
+	aw.audit("player_update", strconv.FormatInt(req.UID, 10), string(detail))
+	aw.push(mustJSON(map[string]any{"op": "refresh_player", "uid": req.UID}))
+	if !s.commitAdmin(ctx, w, aw) {
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -880,11 +902,14 @@ func (s *Server) handleGrantItem(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, err.Error())
 		return
 	}
-	_ = s.db.QueuePush(r.Context(), mustJSON(map[string]any{
+	aw := adminWrite{admin: adminOf(r)}
+	aw.push(mustJSON(map[string]any{
 		"op": "grant_item", "uid": req.UID, "item_id": req.ItemID, "qty": req.Qty,
 	}))
-	_ = s.db.AuditLogWrite(r.Context(), adminOf(r), "grant_item",
-		strconv.FormatInt(req.UID, 10), fmt.Sprintf("%s x%d", req.ItemID, req.Qty))
+	aw.audit("grant_item", strconv.FormatInt(req.UID, 10), fmt.Sprintf("%s x%d", req.ItemID, req.Qty))
+	if !s.commitAdmin(r.Context(), w, aw) {
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -912,11 +937,15 @@ func (s *Server) handleFishTVTest(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, "kind 取值 -36..36")
 		return
 	}
-	_ = s.db.QueuePush(r.Context(), mustJSON(map[string]any{
+	aw := adminWrite{admin: adminOf(r)}
+	aw.push(mustJSON(map[string]any{
 		"op": "fish_tv_test", "uid": req.UID, "channel": req.Channel, "kind": req.Kind,
 		"kv_shape": req.KVShape, "species": req.Species, "weight_g": req.WeightG,
 		"text": req.Text,
 	}))
+	if !s.commitAdmin(r.Context(), w, aw) {
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true})
 }
 func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
@@ -927,8 +956,12 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 400, "参数错误")
 		return
 	}
-	_ = s.db.QueuePush(r.Context(), mustJSON(map[string]any{"op": "kick", "uid": req.UID}))
-	_ = s.db.AuditLogWrite(r.Context(), adminOf(r), "kick", strconv.FormatInt(req.UID, 10), "")
+	aw := adminWrite{admin: adminOf(r)}
+	aw.push(mustJSON(map[string]any{"op": "kick", "uid": req.UID}))
+	aw.audit("kick", strconv.FormatInt(req.UID, 10), "")
+	if !s.commitAdmin(r.Context(), w, aw) {
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true})
 }
 
@@ -945,12 +978,16 @@ func (s *Server) handleBan(w http.ResponseWriter, r *http.Request) {
 		httpError(w, 500, err.Error())
 		return
 	}
+	aw := adminWrite{admin: adminOf(r)}
 	action := "unban"
 	if req.Banned {
 		action = "ban"
-		_ = s.db.QueuePush(r.Context(), mustJSON(map[string]any{"op": "kick", "uid": req.UID}))
+		aw.push(mustJSON(map[string]any{"op": "kick", "uid": req.UID}))
 	}
-	_ = s.db.AuditLogWrite(r.Context(), adminOf(r), action, strconv.FormatInt(req.UID, 10), "")
+	aw.audit(action, strconv.FormatInt(req.UID, 10), "")
+	if !s.commitAdmin(r.Context(), w, aw) {
+		return
+	}
 	writeJSON(w, map[string]any{"ok": true})
 }
 
