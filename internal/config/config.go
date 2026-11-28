@@ -139,12 +139,20 @@ func (a Admin) ListenAllInterfaces() bool {
 // WeakWarnings 列出管理端仍在用默认凭据或默认签名密钥的项，供各进程启动时告警。
 // 返回空切片表示没有发现问题；文案直接给出配置项名，便于照着改。
 func (a Admin) WeakWarnings() []string {
+	// 告警必须按实际会写入 admin_user 的凭据判断：用户名为空时
+	// EffectiveCredentials 会整体回退到 admin/admin123，此时即使配置里写了
+	// 自定义密码，实际生效的仍是弱口令。
+	username, password := a.EffectiveCredentials()
 	out := []string{}
 	switch {
-	case strings.TrimSpace(a.Password) == "":
+	case strings.TrimSpace(password) == "":
 		out = append(out, "管理后台密码为空：请设置 config.yaml 的 admin.password 或环境变量 RF4_ADMIN_PASSWORD")
-	case a.Password == DefaultAdminPassword:
-		out = append(out, "管理后台仍使用默认密码 "+DefaultAdminPassword+"：请修改 config.yaml 的 admin.password 或环境变量 RF4_ADMIN_PASSWORD，开放到局域网前必须替换")
+	case password == DefaultAdminPassword:
+		if strings.TrimSpace(a.Username) == "" {
+			out = append(out, "管理后台用户名 "+username+" 来自缺省回退，实际使用默认密码 "+DefaultAdminPassword+"：请设置 config.yaml 的 admin.username 和 admin.password，开放到局域网前必须替换")
+		} else {
+			out = append(out, "管理后台仍使用默认密码 "+DefaultAdminPassword+"：请修改 config.yaml 的 admin.password 或环境变量 RF4_ADMIN_PASSWORD，开放到局域网前必须替换")
+		}
 	}
 	if strings.TrimSpace(a.JWTSecret) == "" || a.JWTSecret == DefaultAdminJWTSecret {
 		out = append(out, "管理后台 JWT 签名密钥仍为默认值：请修改 config.yaml 的 admin.jwt_secret 或环境变量 RF4_ADMIN_JWT_SECRET，否则知道默认值的人可以自行签发管理令牌")

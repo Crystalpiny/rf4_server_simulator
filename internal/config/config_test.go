@@ -121,6 +121,26 @@ func TestAdminWeakWarningsReportDefaultCredentials(t *testing.T) {
 	}
 }
 
+// 用户名为空时 EffectiveCredentials 回退到默认 admin/admin123，告警也必须
+// 按这个实际生效值给出；配置里写了别的密码不能掩盖回退后的弱口令。
+func TestAdminWeakWarningsUseEffectiveCredentials(t *testing.T) {
+	a := Admin{Username: "", Password: "strong-pass", JWTSecret: "lan-secret"}
+	user, pass := a.EffectiveCredentials()
+	if user != DefaultAdminUsername || pass != DefaultAdminPassword {
+		t.Fatalf("空用户名应回退到 %s/%s，实得 %s/%s", DefaultAdminUsername, DefaultAdminPassword, user, pass)
+	}
+	got := a.WeakWarnings()
+	if len(got) != 1 {
+		t.Fatalf("回退默认密码应只报一条弱口令告警，实得 %d 条: %v", len(got), got)
+	}
+	joined := strings.Join(got, "\n")
+	for _, want := range []string{"admin.username", DefaultAdminPassword} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("告警应包含 %q 以便照着改，实得: %s", want, joined)
+		}
+	}
+}
+
 // 只有回环地址才算安全默认；通配地址与主机名都视为对外开放。
 func TestAdminListenAllInterfaces(t *testing.T) {
 	cases := []struct {

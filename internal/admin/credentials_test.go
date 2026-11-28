@@ -61,6 +61,29 @@ func TestDashboardReportsWeakCredentialWarnings(t *testing.T) {
 	}
 }
 
+// 总览告警必须反映实际写入 admin_user 的凭据，而不是只看配置原文。
+func TestDashboardWarningsUseEffectiveCredentials(t *testing.T) {
+	srv := NewServer(config.Admin{
+		JWTSecret: "lan-secret",
+		Username:  "",
+		Password:  "strong-pass",
+	}, testDB(t), logging.Discard(), nil)
+	rec := httptest.NewRecorder()
+	srv.handleDashboard(rec, httptest.NewRequest(http.MethodGet, "/api/dashboard", nil))
+	var got struct {
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("解析总览响应失败: %v，响应体: %s", err, rec.Body.String())
+	}
+	if len(got.Warnings) != 1 {
+		t.Fatalf("空用户名回退默认密码应报一条告警，实得 %d 条: %v", len(got.Warnings), got.Warnings)
+	}
+	if joined := strings.Join(got.Warnings, "\n"); !strings.Contains(joined, config.DefaultAdminPassword) || !strings.Contains(joined, "admin.username") {
+		t.Fatalf("告警应点名默认密码和 admin.username，实得: %s", joined)
+	}
+}
+
 // 前端按数组渲染告警条：没有告警时也必须是 []，不能是 null。
 func TestDashboardWarningsStayArrayWithoutDefaults(t *testing.T) {
 	srv := NewServer(config.Admin{JWTSecret: "lan-secret", Username: "admin", Password: "strong-pass"},

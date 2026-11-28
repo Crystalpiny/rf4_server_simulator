@@ -54,7 +54,7 @@ Copy-Item config.example.yaml config.yaml
 - 将 `gateway.advertise_host` 设置为客户端可用于实时连接的地址。
 - 将 `gateway.login_domain` 设置为主登录主机名。生成的证书会覆盖该名称、`localhost` 和 `127.0.0.1`。
 - 为 `gateway.tunnel.psk` 和 `game.tunnel.psk` 设置相同的非空值。
-- 在将服务开放到任何网络之前，替换 `admin.jwt_secret`、`admin.password` 和隧道 PSK；未替换时启动日志和管理后台总览会给出告警。
+- 在将服务开放到任何网络之前，替换 `admin.jwt_secret`、`admin.password` 和隧道 PSK；管理后台凭据或密钥未替换时启动日志和管理后台总览会给出告警，隧道 PSK 需自行确认已替换。
 - 保持 `sqlite.static_path` 指向随附的 `server_data/static.sqlite3`。
 
 `config.yaml` 已被 `.gitignore` 排除。配置加载器支持 `config.example.yaml` 中说明的 `RF4_*` 覆盖项。
