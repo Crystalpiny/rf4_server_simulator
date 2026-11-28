@@ -19,7 +19,7 @@ import (
 //
 // 条件来源：internal/gameserver/assets/achievement_texts.json，由客户端
 // 4.0.25034 成就列表面板还原的 130 条标题/描述（截图第 N 条对应
-// achievement_def 按 id 升序第 N 个 id）。目前规则表实装 99 条，其余 31 条
+// achievement_def 按 id 升序第 N 个 id）。目前规则表实装 100 条，其余 30 条
 // 依赖服务端尚未实现的功能，在文件末尾按分组留空注释。
 
 type achievementEventKind uint8
@@ -48,6 +48,7 @@ type achievementEvent struct {
 	// PVALoaded 本杆抛投时钓组上挂着 PVA 棒（品类 30），且入水确实消耗掉一份。
 	// PVA 不是钓组类型（rigmeta.go:rigTypeNames 里没有它），只能按载荷判。
 	PVALoaded    bool
+	Streak       int64 // 连续上鱼数（player_counters.catch_streak，中断即归零）
 	RareReleased int64 // 累计已放生的稀有鱼条数（player_counters）
 }
 
@@ -238,6 +239,8 @@ var achievementRules = []achievementRule{
 
 	// ---- 900-912 里程碑 / 诱饵广度 / 放流 ----
 	{ID: 900, Event: evFishLanded, Check: func(achievementEvent) bool { return true }},
+	// 904 熟能生巧：连续五条鱼无中断（Streak 来自 player_counters.catch_streak）。
+	{ID: 904, Event: evFishLanded, Check: func(ev achievementEvent) bool { return ev.Streak >= 5 }},
 	{ID: 905, Event: evFishLanded, Check: fishHeavierThan(50_000)}, // 体重超过 50 公斤
 	{ID: 906, Event: evFishKept, Check: distinctBaitsAtLeast(20)},  // 20 种不同诱饵
 	{ID: 907, Event: evFishKept, Check: distinctBaitsAtLeast(50)},  // 50 种
@@ -327,13 +330,13 @@ func (s *Server) evaluateAchievements(ctx *Ctx, ev achievementEvent) {
 }
 
 // ============================================================================
-// 留空成就（31 条）= achievement_def 的 130 个 id − 规则表的 99 条。
+// 留空成就（30 条）= achievement_def 的 130 个 id − 规则表的 100 条。
 // 完整清单与 achievements_registry_test.go 的 unimplementedAchievementIDs 一致：
 //
 //   102, 104, 106, 108, 156, 157, 204, 209,
 //   300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311,
 //   409, 411, 412, 413, 414, 415, 416,
-//   901, 902, 903, 904
+//   901, 902, 903
 //
 // 待对应功能落地后，按「绑定事件 + 一个布尔判断」在规则表各补一行即可。
 // 依赖的缺失能力按组说明：
@@ -361,12 +364,9 @@ func (s *Server) evaluateAchievements(ctx *Ctx, ev achievementEvent) {
 // 901/902/903 每种浮子/纺车/沉底钓组各钓一条：需要「已用钓组集合」持久化，
 //   player_achievements 无集合列。
 //
-// 904 连续五条鱼无中断：全项目无 streak/连续计数（player_counters 只有
-//   escapes/line_breaks/rod_breaks）。
-//
 // 912 单次放流已实装。
 //
-// ---- 以下已实装，不属于上面 31 条，仅记录近似判定的已知差距 ----
+// ---- 以下已实装，不属于上面 30 条，仅记录近似判定的已知差距 ----
 // 210 抛掷 PVA 棒钓组：PVA 不是钓组类型而是饵料载荷（品类 30），判据取「本杆
 //   入水确实消耗掉一份 PVA 棒」，与 206 抛饵笼/211 测竿的 rigType 近似不同。
 //   局限：只认挂在竿上抛投这一条路径；手动抛投（12/1 手抛）的 PVA 不进本杆
