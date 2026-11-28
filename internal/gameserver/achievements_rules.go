@@ -19,7 +19,7 @@ import (
 //
 // 条件来源：internal/gameserver/assets/achievement_texts.json，由客户端
 // 4.0.25034 成就列表面板还原的 130 条标题/描述（截图第 N 条对应
-// achievement_def 按 id 升序第 N 个 id）。目前实装 89 条，其余 41 条
+// achievement_def 按 id 升序第 N 个 id）。目前实装 98 条，其余 32 条
 // 依赖服务端尚未实现的功能，在文件末尾按分组留空注释。
 
 type achievementEventKind uint8
@@ -45,6 +45,7 @@ type achievementEvent struct {
 	BaitKey       string  // 本次挖到的饵 item_id
 	CookPoints    float64 // 烹饪熟练度（skill.skill_id=6，0..100）
 	Grade         int64   // 放流鱼档位（1..4，4=蓝冠=超级稀有）
+	Streak        int64   // 连续上鱼数（player_counters.catch_streak，中断即归零）
 }
 
 type achievementRule struct {
@@ -230,6 +231,8 @@ var achievementRules = []achievementRule{
 
 	// ---- 900-912 里程碑 / 诱饵广度 / 放流 ----
 	{ID: 900, Event: evFishLanded, Check: func(achievementEvent) bool { return true }},
+	// 904 熟能生巧：连续五条鱼无中断（Streak 来自 player_counters.catch_streak）。
+	{ID: 904, Event: evFishLanded, Check: func(ev achievementEvent) bool { return ev.Streak >= 5 }},
 	{ID: 905, Event: evFishLanded, Check: fishHeavierThan(50_000)}, // 体重超过 50 公斤
 	{ID: 906, Event: evFishKept, Check: distinctBaitsAtLeast(20)},  // 20 种不同诱饵
 	{ID: 907, Event: evFishKept, Check: distinctBaitsAtLeast(50)},  // 50 种
@@ -297,13 +300,13 @@ func (s *Server) evaluateAchievements(ctx *Ctx, ev achievementEvent) {
 }
 
 // ============================================================================
-// 留空成就（33 条）= achievement_def 的 130 个 id − 规则表的 97 条。
+// 留空成就（32 条）= achievement_def 的 130 个 id − 规则表的 98 条。
 // 完整清单与 achievements_registry_test.go 的 unimplementedAchievementIDs 一致：
 //
 //   102, 104, 106, 108, 156, 157, 204, 209, 210,
 //   300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311,
 //   409, 411, 412, 413, 414, 415, 416,
-//   901, 902, 903, 904, 911
+//   901, 902, 903, 911
 //
 // 待对应功能落地后，按「绑定事件 + 一个布尔判断」在规则表各补一行即可。
 // 依赖的缺失能力按组说明：
@@ -334,15 +337,12 @@ func (s *Server) evaluateAchievements(ctx *Ctx, ev achievementEvent) {
 // 901/902/903 每种浮子/纺车/沉底钓组各钓一条：需要「已用钓组集合」持久化，
 //   player_achievements 无集合列。
 //
-// 904 连续五条鱼无中断：全项目无 streak/连续计数（player_counters 只有
-//   escapes/line_breaks/rod_breaks）。
-//
 // 911 累计释放 10 条稀有鱼：此前放流无持久化（catch_log 只记 source='keep'）。
 //   现在 catch_log 在结算落 source='catch'、入护才抬成 'keep'，放生的稀有鱼
 //   可按「grade>=3 且 source='catch'」计数，911 具备实现条件（本批不实装）。
 //   912 单次放流已实装。
 //
-// ---- 以下已实装，不属于上面 33 条，仅记录近似判定的已知差距 ----
+// ---- 以下已实装，不属于上面 32 条，仅记录近似判定的已知差距 ----
 // 151/153/154/162 用拟饵 item_id 前缀判断（crank/plug/spoon/spinner/
 //   topwater/popper/jerkbait，以及自制米诺 hm_minnow_*/hm_j_minnow_*）。
 //   静态库无 minnow* 前缀，原规则的 "minnow" 是死分支，已换成真实前缀。
