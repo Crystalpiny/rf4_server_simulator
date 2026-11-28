@@ -5,15 +5,15 @@ import (
 )
 
 // unimplementedAchievementIDs 是 achievement_def 的 130 个 id 减去规则表的
-// 103 条，与 achievements_rules.go 末尾的留空清单逐项一致。
+// 104 条，与 achievements_rules.go 末尾的留空清单逐项一致。
 var unimplementedAchievementIDs = []int64{
 	106, 108, 210,
 	300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311,
 	409, 411, 412, 413, 414, 415, 416,
-	901, 902, 903, 904, 911,
+	901, 902, 903, 904,
 }
 
-// 规则表：103 条实装、ID 不重复、Check 非空、27 条留空成就不进表，
+// 规则表：104 条实装、ID 不重复、Check 非空、26 条留空成就不进表，
 // 两者合起来正好是 achievement_def 的 130 条。
 func TestAchievementRegistryShape(t *testing.T) {
 	seen := map[int64]bool{}
@@ -26,11 +26,11 @@ func TestAchievementRegistryShape(t *testing.T) {
 			t.Errorf("rule %d has nil Check", r.ID)
 		}
 	}
-	if len(achievementRules) != 103 {
-		t.Errorf("implemented rules = %d, want 103", len(achievementRules))
+	if len(achievementRules) != 104 {
+		t.Errorf("implemented rules = %d, want 104", len(achievementRules))
 	}
-	if len(unimplementedAchievementIDs) != 27 {
-		t.Errorf("unimplemented ids = %d, want 27", len(unimplementedAchievementIDs))
+	if len(unimplementedAchievementIDs) != 26 {
+		t.Errorf("unimplemented ids = %d, want 26", len(unimplementedAchievementIDs))
 	}
 	if len(achievementRules)+len(unimplementedAchievementIDs) != 130 {
 		t.Errorf("rules + unimplemented = %d, want 130", len(achievementRules)+len(unimplementedAchievementIDs))
