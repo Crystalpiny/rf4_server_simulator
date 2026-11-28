@@ -5,6 +5,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -146,7 +147,7 @@ func defaults() *Config {
 			Region:                "CN",
 			ServerName:            "RF4_566",
 			LoginDomain:           "api.rf4game.ru",
-			MaxConns:              512,
+			MaxConns:              DefaultMaxConns,
 			AckClientFrames:       true,
 			TransportKeepaliveSec: 5.0,
 			Tunnel:                Tunnel{Addr: "127.0.0.1:9401", PSK: "change-me"},
@@ -230,12 +231,38 @@ func (c *Config) applyEnvOverrides() {
 	envInt("RF4_WEATHER_CYCLE_DAYS", &c.Game.Weather.CycleDays)
 }
 
+// realtime 连接上限。默认值与上限都只是容量约束：0 会让连接信号量变成无缓冲
+// channel，负数会让 make(chan, n) 直接 panic，所以两者都必须在启动前挡掉。
+const (
+	// DefaultMaxConns 是 gateway.max_conns 的默认值，也是未配置时的生效值。
+	DefaultMaxConns = 512
+	// MaxAllowedConns 是 gateway.max_conns 允许的上限。
+	MaxAllowedConns = 100000
+)
+
+// ErrMaxConns 表示 gateway.max_conns 超出允许范围，调用方可用 errors.Is 判断。
+var ErrMaxConns = errors.New("gateway.max_conns 超出允许范围")
+
 func (c *Config) validate() error {
 	if c.SQLite.Path == "" {
 		return fmt.Errorf("sqlite.path 未配置")
 	}
 	if c.Gateway.AdvertisePort == 0 {
 		return fmt.Errorf("gateway.advertise_port 未配置")
+	}
+	if err := CheckMaxConns(c.Gateway.MaxConns); err != nil {
+		return err
+	}
+	return nil
+}
+
+// CheckMaxConns 校验 realtime 最大并发连接数。
+//
+// 只有正容量才能约束接入循环：0 会让第二条连接起在 sem 上永久阻塞，负数会让
+// make(chan, n) 直接 panic。错误信息带上配置项名与当前值，便于定位配置文件。
+func CheckMaxConns(n int) error {
+	if n < 1 || n > MaxAllowedConns {
+		return fmt.Errorf("%w: gateway.max_conns=%d，允许范围 1..%d", ErrMaxConns, n, MaxAllowedConns)
 	}
 	return nil
 }
