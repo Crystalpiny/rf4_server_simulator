@@ -90,8 +90,8 @@ func (l adminLogger) Error(msg string, args ...any) { l.l.Error(logMessage(msg, 
 func main() {
 	configPath := flag.String("config", "config.yaml", "配置文件路径")
 	panelAddr := flag.String("panel-addr", "127.0.0.1:9500", "控制面板监听地址（仅本机）")
-	adminUser := flag.String("admin-user", "admin", "初始管理员用户名（表空时生效）")
-	adminPass := flag.String("admin-pass", "admin123", "初始管理员密码（表空时生效）")
+	adminUser := flag.String("admin-user", "", "初始管理员用户名（默认取配置 admin.username）")
+	adminPass := flag.String("admin-pass", "", "初始管理员密码（默认取配置 admin.password）")
 	staticDB := flag.String("static-db", "", "静态配置库路径（默认取 sqlite.static_path）")
 	flag.Parse()
 
@@ -166,7 +166,14 @@ func main() {
 	// ---- 首次初始化（幂等）----
 	if seed.NeedsSeed(cfg, *staticDB) {
 		app.log.Info("正在初始化数据库（首跑需导入静态配置，请稍候）…")
-		res, err := seed.Ensure(context.Background(), cfg, *staticDB, *adminUser, *adminPass, app.log)
+		seedUser, seedPass := cfg.Admin.EffectiveCredentials()
+		if *adminUser != "" {
+			seedUser = *adminUser
+		}
+		if *adminPass != "" {
+			seedPass = *adminPass
+		}
+		res, err := seed.Ensure(context.Background(), cfg, *staticDB, seedUser, seedPass, app.log)
 		if err != nil {
 			showFatal("数据库初始化失败", err)
 			return
@@ -174,13 +181,16 @@ func main() {
 		app.log.Info(fmt.Sprintf("初始化完成 seeded=%v tables=%d admin_created=%v elapsed=%s",
 			res.Seeded, res.Tables, res.AdminCreated, res.Elapsed.Round(time.Millisecond)))
 		if res.AdminCreated {
-			app.log.Warn("已创建默认管理员 admin/" + *adminPass + "，请尽快在管理后台修改")
+			app.log.Warn("已创建初始管理员 " + seedUser + "，密码取自配置 admin.password；发布包默认密码仅限本机使用")
 		}
 	}
 
 	// ---- 内嵌管理后台 ----
 	if err := app.initAdmin(app.ctx); err != nil {
 		app.log.Error("管理后台初始化失败: " + err.Error())
+	}
+	for _, warn := range cfg.Admin.WeakWarnings() {
+		app.log.Warn(warn)
 	}
 	updateTrayIcon(app)
 
@@ -382,10 +392,7 @@ func (a *app) handleStatus(w http.ResponseWriter, _ *http.Request) {
 // handleOverview 控制中心首页的「后台信息」：只读统计，不需要登录管理后台。
 // 直接读的是管理后台同一个库（WAL 只读 COUNT，不写），读不到就留空由前端显示「未上报」。
 func (a *app) handleOverview(w http.ResponseWriter, r *http.Request) {
-	user := a.cfg.Admin.Username
-	if user == "" {
-		user = "admin"
-	}
+	user, _ := a.cfg.Admin.EffectiveCredentials()
 	out := map[string]any{
 		"admin":      "/admin/",
 		"admin_user": user,
@@ -521,10 +528,7 @@ func (a *app) initAdmin(ctx context.Context) error {
 		a.setAdminError(err)
 		return err
 	}
-	user, pass := a.cfg.Admin.Username, a.cfg.Admin.Password
-	if user == "" {
-		user, pass = "admin", "admin123"
-	}
+	user, pass := a.cfg.Admin.EffectiveCredentials()
 	if _, err := db.UpsertAdminPassword(ctx, user, pass); err != nil {
 		_ = db.Close()
 		a.setAdminError(err)
